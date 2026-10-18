@@ -18,7 +18,7 @@ class AgentRunResult:
 
 
 def run_agent(ctx: AgentRunContext, config: AgentRunConfig) -> AgentRunResult:
-    """Run the LangGraph agent for ``ctx.job_id`` (sandbox must already be bound)."""
+    """Run the agent loop for ``ctx.job_id`` (sandbox must already be bound)."""
     if not config.runtime_enabled:
         return AgentRunResult(
             ok=False,

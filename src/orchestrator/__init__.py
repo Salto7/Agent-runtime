@@ -1,4 +1,4 @@
-"""orchestrator — litellm + LangGraph + Docker sandbox orchestration library."""
+"""orchestrator — litellm + Docker sandbox agent orchestration library."""
 
 from orchestrator.api import Orchestrator, OrchestratorResult, PlanResult, run
 from orchestrator.config import RuntimeConfig, bootstrap, configure, discover_root, get_config

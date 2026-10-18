@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 
 def main(argv: list[str] | None = None) -> int:
     # Reuse the thin client implementation.
     root = Path(__file__).resolve().parents[2]
-    examples = root.parent / "examples" / "thin_client.py"
+    examples = root / "examples" / "thin_client.py"
     # When installed editable, examples live next to src/
     if not examples.is_file():
         examples = Path.cwd() / "examples" / "thin_client.py"

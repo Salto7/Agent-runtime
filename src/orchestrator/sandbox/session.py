@@ -1,8 +1,9 @@
 """Context-var sandbox session binding (SharedService).
 
-Uses ``contextvars`` so LangGraph ToolNode's ``ContextThreadPoolExecutor``
-propagates the bound backend to tool worker threads. ``threading.local()``
-does not cross that pool and previously caused ``mode='unbound'`` tool errors.
+Uses ``contextvars`` so the bound backend propagates correctly to worker
+threads a host's own concurrency may use (e.g. a thread pool executor).
+``threading.local()`` does not cross those pool boundaries and previously
+caused ``mode='unbound'`` tool errors.
 
 Public API is classmethods (``SandboxSession.current()``) over the process
 singleton; construct ``SandboxSession()`` only for tests/DI.

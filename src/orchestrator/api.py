@@ -117,7 +117,7 @@ class PlanResult:
 
 
 class Orchestrator:
-    """Zero-setup litellm + LangGraph + Docker orchestrator."""
+    """Zero-setup litellm + Docker sandbox orchestrator."""
 
     def __init__(
         self,

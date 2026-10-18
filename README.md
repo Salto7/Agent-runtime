@@ -28,7 +28,7 @@ Orchestrator runs tools and custom Python scripts from a tool catalog or skill a
 
 **Skills format:** skill directories follow the open [Agent Skills](https://agentskills.io) (`agentskills`) `SKILL.md` layout (YAML frontmatter + Markdown body, optional `scripts/` / `references/` / `assets/`). Orchestrator extends that with product fields under `metadata:` (category, jobable, lifecycle, requires_clis, …) and standardized `scripts/run.py` entrypoints.
 
-## How it works — the agent graph
+## How it works
 
 A prompt becomes a plan, a sandbox is provisioned with whatever the plan needs, and an agent loop executes it — looping back through a **replan** step on failure instead of just giving up. An Analyzer step always runs at the end and drafts a markdown report from findings. After a run, the host can call `suggest_skills` with the brief or findings to recommend what to run next.
 
@@ -36,30 +36,7 @@ A prompt becomes a plan, a sandbox is provisioned with whatever the plan needs, 
 prompt → plan → sandbox → provision → execute ⇄ replan → result → suggest next skills
 ```
 
-This is the actual LangGraph graph (`orchestrator.agent.graph`) underneath that loop — shown generically, with no domain baked in:
-
-```mermaid
-flowchart TB
-    START(("prompt")) --> GATE["gate<br/><i>drain operator guidance</i>"]
-    GATE --> AGENT["agent<br/><i>LLM turn: think / call a tool</i>"]
-    AGENT -- "tool call, under max_iterations" --> TOOLS["tools<br/><i>run the requested tool</i>"]
-    AGENT -- "no tool call, or max_iterations hit" --> DONE(("result"))
-    TOOLS --> RECOVER{"recover<br/><i>did the tool report an error?</i>"}
-    RECOVER -- "yes, under max_failure_replans" --> NUDGE["replan nudge<br/><i>inject a recovery instruction</i>"]
-    RECOVER -- "no, or replans exhausted" --> GATE
-    NUDGE --> GATE
-
-    classDef node fill:#fbefff,stroke:#8250df,color:#1f2328,stroke-width:1.5px
-    classDef io fill:#ddf4ff,stroke:#0969da,color:#1f2328,stroke-width:1.5px
-    classDef branch fill:#fff8c5,stroke:#9a6700,color:#1f2328,stroke-width:1.5px
-    class START,DONE io
-    class GATE,AGENT,TOOLS,NUDGE node
-    class RECOVER branch
-```
-
-- **`gate`** runs before every turn and injects any live operator guidance (a human steering a run mid-flight) as a message.
-- **`agent`** is one LLM turn with tools bound; it either calls a tool or produces a final answer.
-- **`tools` → `recover`** is the replan loop: a tool result that looks like an error gets a recovery nudge injected back into the conversation (bounded by `AGENT_MAX_FAILURE_REPLANS`) instead of the loop silently repeating the same failing call forever (bounded overall by `AGENT_MAX_ITERATIONS`).
+Underneath, that loop is a small, plain-Python state machine (`orchestrator.agent.graph`, no graph-execution framework) with four steps: **`gate`** (drains any live operator guidance before each turn), **`agent`** (one LLM turn — think, or call a tool), **`tools`** (runs the requested tool), and **`recover`** (a tool result that looks like an error gets a recovery nudge injected back into the conversation, instead of the loop silently repeating the same failing call — bounded by `AGENT_MAX_FAILURE_REPLANS`, with the whole loop bounded by `AGENT_MAX_ITERATIONS`). Every job in the multi-agent diagram below — PM, specialist, or worker — runs this exact same graph; see "Adding a tool, skill, or role" for how a role changes what it does without changing this loop.
 
 ## Core features
 
@@ -120,42 +97,58 @@ The piece that's easy to miss from the sections above in isolation: a PM job, sp
 
 ```mermaid
 flowchart TB
-    HOST(("Host app")) --> PM["PM<br/>plans & delegates"]
-    PM <--> A2A{{"A2A Hub<br/>directed messages, never a broadcast"}}
-    A2A <--> SPEC["Specialists"]
-    A2A <--> WORK["Workers"]
 
-    SPEC --> CAP["Sandbox<br/>tools · MCP servers · skills"]
-    WORK --> CAP
+    HOST["Host app"]
+    PM("PM<br/>Planning & delegation")
+    SPEC["Specialists<br/>Execute jobs · Spawn workers · A2A"]
+    WORK["Workers<br/>Execute jobs · A2A · Operator prompting"]
+    SANDBOX["Sandbox<br/>Tools · Skills · MCP servers (installed, not yet live-callable)"]
+    AN["Analyzer<br/>Synthesizes report"]
+    REPORT(("Report"))
 
-    PM --> AN["Analyzer"]
-    SPEC -.-> AN
-    WORK -.-> AN
-    AN --> REPORT(("Report"))
+    HOST ==>|"brief"| PM
+    PM ==>|"Delegate"| SPEC
+    SPEC ==>|"Spawn"| WORK
+    WORK ==>|"run_cli()<br/>run_code()<br/>provision_cli()"| SANDBOX
+    SANDBOX ==>|"record_finding() → list_findings()"| AN
+    AN ==>|"run_report()"| REPORT
 
-    SPEC -.-> MEM[("Memory<br/>Dream + role review")]
-    WORK -.-> MEM
-    MEM -. "approved role changes" .-> PM
-    MEM -. "approved role changes" .-> SPEC
+    subgraph SIDES[" "]
+        direction LR
+        A2A{{"A2AHub<br/>Directed messages"}}
+        MEM[("MemoryStore<br/>Dream: curate_gist / synthesize_playbooks")]
+    end
 
-    classDef agent fill:#fbefff,stroke:#8250df,color:#1f2328,stroke-width:1.5px
-    classDef hub fill:#ddf4ff,stroke:#0969da,color:#1f2328,stroke-width:1.5px
-    classDef cap fill:#dafbe1,stroke:#1a7f37,color:#1f2328,stroke-width:1.5px
-    classDef brain fill:#fff8c5,stroke:#9a6700,color:#1f2328,stroke-width:1.5px
-    classDef io fill:#f6f8fa,stroke:#57606a,color:#1f2328,stroke-width:1.5px
+    PM <==>|"send() / inbox()"| A2A
+    SPEC <==>|"send() / inbox()"| A2A
+    WORK <==>|"send() / inbox()"| A2A
 
-    class PM,SPEC,WORK,AN agent
+    MEM -.->|"apply_proposal() → RoleRecord"| PM
+    SPEC -.->|"finished transcript → tick()"| MEM
+    WORK -.->|"finished transcript → tick()"| MEM
+
+    classDef pyr fill:#fbefff,stroke:#8250df,color:#1f2328,stroke-width:2px
+    classDef hub fill:#ddf4ff,stroke:#0969da,color:#1f2328,stroke-width:2px
+    classDef brain fill:#fff8c5,stroke:#9a6700,color:#1f2328,stroke-width:2px
+    classDef io fill:#f6f8fa,stroke:#57606a,color:#1f2328,stroke-width:2px
+
+    class HOST,PM,SPEC,WORK,SANDBOX,AN pyr
     class A2A hub
-    class CAP cap
     class MEM brain
-    class HOST,REPORT io
+    class REPORT io
+
+    linkStyle 0,1,2,3,4,5 stroke:#8250df,stroke-width:3px
+    linkStyle 6,7,8 stroke:#0969da,stroke-width:3px
+    linkStyle 9,10,11 stroke:#9a6700,stroke-width:2px,stroke-dasharray:5 5
+
+    style SIDES fill:none,stroke:none
 ```
 
-- **PM → A2A → specialists/workers.** The PM never calls another job directly — only through the A2A hub, which is directed messaging (never a broadcast) with built-in limits per pair and per fan-out. "Specialists" and "workers" here stand in for any number of jobs — in a real run there can be many of either.
-- **Every box is the same agent graph.** PM, specialists, and workers all run the identical `gate → agent → tools ⇄ recover` loop from the diagram above — only the role (goal/skills/prompt) differs. "Specialist" and "worker" aren't special-cased types in the code, just different roles.
-- **Sandbox is one shared concept, many per-job instances.** Tools, installed MCP servers, and skills are what a job calls while it works — each job gets its own, not a shared one.
-- **Analyzer only sees the end state.** It runs once, after the PM has marked every objective done (or the run ends), and synthesizes the final report from accumulated findings — it is not part of the A2A delegation chain.
-- **Brain runs out-of-band.** Dream doesn't touch a live run at all — it reads finished transcripts later, on whatever cadence the host calls `tick()`, and the only thing that ever reaches a future run is an *approved* role change feeding that role's next system prompt.
+- **PM → A2A → specialists/workers.** The PM never calls another job directly — only through `A2AHub.send()`/`multisend()`, with built-in per-pair and fan-out limits; delivery is pull-based via `inbox()`. "Specialists" and "workers" stand in for any number of jobs — in a real run there can be many of either.
+- **Every box is the same agent loop.** PM, specialists, and workers all run the identical gate → act ⇄ tools/recover loop from "How it works" above — only the role (goal/skills/prompt) differs. "Specialist" and "worker" aren't special-cased types in the code, just different roles.
+- **Tool execution is real; MCP execution isn't, yet.** `run_cli()`/`run_code()`/`provision_cli()` are live calls a job's tool-binding actually makes. `orchestrator.mcp.McpInstaller.install_source()` registers an MCP server into a catalog — a separate, install-time action — but nothing in this repo currently binds an installed MCP server as a callable tool inside a live run. Hosts wiring MCP execution in need to add that binding themselves.
+- **Analyzer only sees the end state.** It runs once, after the PM has marked every objective done (or the run ends), and synthesizes the final report from accumulated findings (`list_findings()`) — it is not part of the A2A delegation chain.
+- **Brain runs out-of-band.** Dream doesn't touch a live run at all — the host collects finished transcripts and periodically calls `tick()`; the only thing that ever reaches a future run is an *approved* role change (`apply_proposal()`) updating that role's `RoleRecord`.
 
 ## MCP servers & Marketplace
 
