@@ -120,99 +120,40 @@ The piece that's easy to miss from the sections above in isolation: a PM job, sp
 
 ```mermaid
 flowchart TB
-    HOST(("Host app<br/>submits a brief")) --> PM
+    HOST(("Host app")) --> PM["PM<br/>plans & delegates"]
+    PM <--> A2A{{"A2A Hub<br/>directed messages, never a broadcast"}}
+    A2A <--> SPEC["Specialists"]
+    A2A <--> WORK["Workers"]
 
-    subgraph AGENTS["Live jobs — each its own agent graph (gate → agent → tools ⇄ recover)"]
-        direction TB
-        PM["PM job<br/><i>role: pm</i><br/>plans objectives, delegates, tracks completion"]
-        SPEC1["Specialist job<br/><i>role: researcher</i>"]
-        SPEC2["Specialist job<br/><i>role: reviewer</i>"]
-        W1["Worker job<br/><i>role: worker</i>"]
-        W2["Worker job<br/><i>role: worker</i>"]
-        AN["Analyzer job<br/>runs once, after everything else stops"]
-    end
+    SPEC --> CAP["Sandbox<br/>tools · MCP servers · skills"]
+    WORK --> CAP
 
-    subgraph A2A["A2AHub — directed messages only, never a broadcast"]
-        direction TB
-        SEND["send() / multisend()<br/>per-pair cap · max_recipients cap"]
-        INBOX["inbox() per job_id<br/>mark_read()"]
-        WAKE["wake(job_id) callback<br/>host decides how a job resumes"]
-    end
+    PM --> AN["Analyzer"]
+    SPEC -.-> AN
+    WORK -.-> AN
+    AN --> REPORT(("Report"))
 
-    PM -- "send(kind=request)" --> SEND
-    SEND --> INBOX
-    INBOX -- "delivered" --> SPEC1
-    INBOX -- "delivered" --> SPEC2
-    SPEC1 -- "multisend(kind=request)" --> SEND
-    INBOX -- "delivered" --> W1
-    INBOX -- "delivered" --> W2
-    W1 -- "send(kind=inform, result)" --> SEND
-    W2 -- "send(kind=inform, result)" --> SEND
-    SPEC2 -- "send(kind=inform, result)" --> SEND
-    INBOX -- "delivered" --> PM
-    SEND -.-> WAKE
-    WAKE -. "resume a parked job" .-> PM
-    WAKE -. "resume a parked job" .-> SPEC1
-
-    subgraph SANDBOX["Per-job sandbox — what gate → agent → tools actually calls"]
-        direction LR
-        TOOLCAT["Tool catalog<br/>tools/catalog/*.yaml<br/>(provision_cli cascade)"]
-        MCP["Installed MCP servers<br/>orchestrator.mcp.McpInstaller<br/>→ McpStore"]
-        SKILLS["Skills<br/>skills/*/SKILL.md<br/>scripts/run.py"]
-        STREAM["Stream/RPC bridge<br/>live progress → host UI"]
-    end
-
-    SPEC1 --> SANDBOX
-    SPEC2 --> SANDBOX
-    W1 --> SANDBOX
-    W2 --> SANDBOX
-    SANDBOX --> STREAM
-
-    PM -- "when every objective is done" --> AN
-    SPEC1 -. "findings" .-> AN
-    SPEC2 -. "findings" .-> AN
-    W1 -. "findings" .-> AN
-    W2 -. "findings" .-> AN
-    AN --> REPORT(("Markdown report<br/>→ host"))
-
-    subgraph BRAIN["Brain — runs on the host's own schedule, not inline with a live run"]
-        direction TB
-        TICK["dream.tick()<br/>reads finished run transcripts"]
-        GIST["curate_gist / render_gist<br/>one run → one LessonRecord"]
-        SYN["synthesize_playbooks<br/>many lessons of a kind → one playbook"]
-        MEM[("MemoryStore<br/>lessons + playbooks")]
-        PROP["propose_role_changes<br/>→ pending ProposalRecord"]
-        HUMAN{{"Human review<br/>approve / reject"}}
-        ROLES[("RoleRegistry / RoleStore<br/>role_id → goal, skills, protected")]
-    end
-
-    AN -. "transcript" .-> TICK
-    SPEC1 -. "transcript" .-> TICK
-    W1 -. "transcript" .-> TICK
-    TICK --> GIST --> MEM
-    MEM --> SYN --> MEM
-    MEM --> PROP --> HUMAN
-    HUMAN -- "approve" --> ROLES
-    HUMAN -- "reject" -.-> PROP
-    ROLES -. "goal / bound skills feed next run's system prompt" .-> PM
-    ROLES -. "goal / bound skills feed next run's system prompt" .-> SPEC1
+    SPEC -.-> MEM[("Memory<br/>Dream + role review")]
+    WORK -.-> MEM
+    MEM -. "approved role changes" .-> PM
+    MEM -. "approved role changes" .-> SPEC
 
     classDef agent fill:#fbefff,stroke:#8250df,color:#1f2328,stroke-width:1.5px
     classDef hub fill:#ddf4ff,stroke:#0969da,color:#1f2328,stroke-width:1.5px
-    classDef sandbox fill:#dafbe1,stroke:#1a7f37,color:#1f2328,stroke-width:1.5px
+    classDef cap fill:#dafbe1,stroke:#1a7f37,color:#1f2328,stroke-width:1.5px
     classDef brain fill:#fff8c5,stroke:#9a6700,color:#1f2328,stroke-width:1.5px
     classDef io fill:#f6f8fa,stroke:#57606a,color:#1f2328,stroke-width:1.5px
 
-    class PM,SPEC1,SPEC2,W1,W2,AN agent
-    class SEND,INBOX,WAKE hub
-    class TOOLCAT,MCP,SKILLS,STREAM sandbox
-    class TICK,GIST,SYN,MEM,PROP,HUMAN,ROLES brain
+    class PM,SPEC,WORK,AN agent
+    class A2A hub
+    class CAP cap
+    class MEM brain
     class HOST,REPORT io
 ```
 
-- **PM → A2A → specialists/workers.** The PM job never calls another job directly — it goes through `A2AHub.send`/`multisend`, which enforces the per-pair cap and `max_recipients` so a bad plan can't turn into a message storm. Delivery is pull-based (`inbox()`); `wake()` is the one hook the host provides to actually resume a parked job when a message arrives.
-- **Every agent box is the same graph.** PM, specialists, and workers all run the identical `gate → agent → tools ⇄ recover` loop from the agent-graph diagram above — only the role (goal/skills/system prompt) and which skills got bound differ. "Specialist" and "worker" aren't special-cased types anywhere in the code, just different `RoleRecord`s.
-- **Sandbox is per-job, not shared state.** Tools, installed MCP servers, and skills are what a job's own `tools` node calls; the stream/RPC bridge is how that job's live progress reaches a host UI while it runs.
+- **PM → A2A → specialists/workers.** The PM never calls another job directly — only through the A2A hub, which is directed messaging (never a broadcast) with built-in limits per pair and per fan-out. "Specialists" and "workers" here stand in for any number of jobs — in a real run there can be many of either.
+- **Every box is the same agent graph.** PM, specialists, and workers all run the identical `gate → agent → tools ⇄ recover` loop from the diagram above — only the role (goal/skills/prompt) differs. "Specialist" and "worker" aren't special-cased types in the code, just different roles.
+- **Sandbox is one shared concept, many per-job instances.** Tools, installed MCP servers, and skills are what a job calls while it works — each job gets its own, not a shared one.
 - **Analyzer only sees the end state.** It runs once, after the PM has marked every objective done (or the run ends), and synthesizes the final report from accumulated findings — it is not part of the A2A delegation chain.
 - **Brain runs out-of-band.** Dream doesn't touch a live run at all — it reads finished transcripts later, on whatever cadence the host calls `tick()`, and the only thing that ever reaches a future run is an *approved* role change feeding that role's next system prompt.
 
