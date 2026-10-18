@@ -171,6 +171,32 @@ result = tick(
 
 Tests: `pytest tests/brain` (22 cases covering registry cache/invalidation, A2A directed/capped/self-message/wake semantics, and the full curate → synthesize → propose → approve/reject round trip against a stubbed LLM).
 
+## MCP servers & Marketplace
+
+`orchestrator.mcp` installs stdio [MCP](https://modelcontextprotocol.io) servers — from a local folder, a git repo, or an npx package — into a host-provided `McpStore`. `orchestrator.marketplace` fetches and *read-only* scans an external repo or zip for skill packs, agent configs, and MCP pointers, so a host can stage findings for review before anything is imported.
+
+```python
+from pathlib import Path
+from orchestrator.mcp import InMemoryMcpStore, McpInstaller
+from orchestrator.marketplace import fetch_git, scan_all
+
+# Install a stdio MCP server from a git repo (disk and npx work the same way)
+installer = McpInstaller(store=InMemoryMcpStore(), mcps_dir=Path("mcps"))
+installer.install_source("git", "owner/some-mcp-server")
+
+# Browse a marketplace repo before importing anything from it — nothing here
+# is executed or imported, only read
+repo = fetch_git(Path("workspaces/marketplace"), "source-1", "owner/skills-pack")
+found = scan_all(repo)  # {"skills": [...], "agents": [...], "mcp_pointers": [...]}
+```
+
+- **stdio only, sandbox PATH only.** The parser rejects `sse`/`http` transports and any command that looks like a host filesystem path (`/usr/bin/...`) — only a bare executable the sandbox already has (`python`, `node`, `npx`, `uv`, …).
+- **Secret values never land in the catalog.** A document with a literal token/password/API key in it is rejected outright; only env var *names* are stored as a schema, with values supplied by the caller at run time.
+- **A clone directory's name is never trusted.** `git clone` always lands at `.../repo` — `McpInstaller` derives the real id from the repo URL (or the package's own `name`), not the throwaway folder name.
+- **Marketplace scanning stages, it doesn't install.** `scan_all` only reads files as text/JSON/YAML; turning a finding into a live skill, role, or MCP server is a separate, explicit step the host controls.
+
+Tests: `pytest tests/mcp tests/marketplace` (30 cases covering manifest/npm/npx/stdio-inference installs, the generic-clone-dir id bug, and the three marketplace scanners).
+
 ## Usage
 
 Use `examples/thin_client.py` (one-shot or interactive).
@@ -208,4 +234,4 @@ LearnAuthoring.suggest_tool("add ffuf fuzzer")
 LearnAuthoring.write_skill("http banner grabber using curl")
 ```
 
-Docker is required for `run` / Learn lab / `provision_cli`. Env: see `.env.example`. Layout: `src/orchestrator/{agent,tools,runtime,skills,learn}` · sample `skills/` · `tools/catalog/`.
+Docker is required for `run` / Learn lab / `provision_cli`. Env: see `.env.example`. Layout: `src/orchestrator/{agent,tools,runtime,skills,learn,brain,mcp,marketplace}` · sample `skills/` · `tools/catalog/`.
