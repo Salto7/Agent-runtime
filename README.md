@@ -136,6 +136,41 @@ flowchart TB
 
 **Caps:** sandbox (`provision_cli`, `run_cli`, `run_code`, …) · skills (`run_skill_script` → `scripts/run.py`, …) · host ports (objectives, findings, subagents) · optional stream/RPC bridge.
 
+## Brain: roles, agent-to-agent messaging, and Dream
+
+`orchestrator.brain` adds the pieces a *multi*-agent host needs on top of the single-agent runtime above: named **roles** a job can run as, **directed** messages between live jobs, and a **Dream** cycle that turns finished runs into lessons, consolidates them into playbooks, and proposes role changes — reviewed by a human before anything goes live.
+
+Storage-agnostic by design: all four pieces talk only to small protocols (`RoleStore`, `MessageStore`, `MemoryStore`, `ProposalStore` in `orchestrator.brain.protocols`). `orchestrator.brain.memory_backend` ships an in-process reference implementation of each, so the brain works with nothing but Python installed; a host swaps in its own (a database, an existing ORM, anything) without the brain's logic changing.
+
+```python
+from orchestrator.brain import A2AHub, RoleRegistry, RoleRecord, tick
+from orchestrator.brain.memory_backend import InMemoryMemoryStore, InMemoryProposalStore, InMemoryRoleStore
+from orchestrator.utils.llm import chat_json
+
+roles = InMemoryRoleStore()
+roles.upsert_role(RoleRecord(role_id="recon", goal="map the target's footprint"))
+registry = RoleRegistry(store=roles)
+
+hub = A2AHub()  # directed only — never a broadcast
+hub.send(sender_job_id="pm-1", recipient_job_id="recon-1", kind="request", content="start recon")
+
+# Periodically (your own scheduler calls this — the library starts no threads):
+result = tick(
+    roles=roles,
+    memory=InMemoryMemoryStore(),
+    proposals=InMemoryProposalStore(),
+    chat_json=chat_json,
+    finished_runs=[("recon-1", "recon", transcript_text)],
+)
+```
+
+- **Roles never go live without review.** Dream's role suggestions land as pending `ProposalRecord`s; `orchestrator.brain.dream.apply_proposal(roles, proposals, proposal_id, decision="approve")` is the only path from a proposal to a real `RoleRecord`, and a `protected` role refuses the kind of change that would replace its identity.
+- **A2A has real limits, not just a happy path.** `A2AHub.send`/`multisend` raise on self-messaging, on a per-pair message cap (stops two agents looping each other), and on exceeding `max_recipients` — failures are reported per-recipient, not as one all-or-nothing error.
+- **"Resume a finished agent" is a host hook, not an assumption.** `send(..., wake=your_callback)` fires your callback with the recipient's job id; the brain has no opinion on how your runtime actually resumes a job.
+- **`RoleRegistry` tracks skill changes, not just role edits** — `unbound_skills()` returns skills nothing is bound to yet, which is exactly what Dream's role proposals act on as your skill catalog grows.
+
+Tests: `pytest tests/brain` (22 cases covering registry cache/invalidation, A2A directed/capped/self-message/wake semantics, and the full curate → synthesize → propose → approve/reject round trip against a stubbed LLM).
+
 ## Usage
 
 Use `examples/thin_client.py` (one-shot or interactive).
