@@ -1,144 +1,85 @@
 # orchestrator
 
-A reusable objective-based deterministic enough agent runtime that **plans → executes → recovers → grows**.
+A reusable, domain-agnostic agent runtime that **plans → executes → recovers → grows** — single-agent by default, with an optional multi-agent **brain** (named roles, directed agent-to-agent messaging, and a Dream cycle that turns finished runs into reusable playbooks).
+
+## Install
+
+Plug-and-play — this repo is a real, pip-installable package (`pyproject.toml`, `src/` layout):
+
+```bash
+pip install git+https://github.com/Salto7/Agent-runtime.git
+# or, working from a clone:
+pip install -e .
+```
+
+That's the whole integration cost. Nothing else is required to `import orchestrator` — no config file, no running service, no API key needed just to construct an `Orchestrator()` or any of the `brain`/`mcp`/`marketplace` classes. An LLM provider key (see `.env.example`) is only needed once you actually call `plan()`/`run()` or the brain's LLM-backed `tick()`.
+
+```python
+from orchestrator import Orchestrator
+
+orch = Orchestrator()
+orch.plan("fetch https://example.com and summarize its headers")
+orch.run("fetch https://example.com and summarize its headers", plan_first=True, remove_sandbox=True)
+```
 
 ## Overview
 
-Orchestrator runs tools and custom Python scripts from a tool catalog or skill asset in isolated sandboxes, so each run stays relatively cheap. Skills and tools live as files under `skills/` and `tools/catalog/`. Your app implements `AgentPorts` for events, subagents, and findings.
+Orchestrator runs tools and custom Python scripts from a tool catalog or skill asset in isolated sandboxes, so each run stays cheap and repeatable. Skills and tools live as files under `skills/` and `tools/catalog/` — extending the system is adding files, not writing new runtime code. Your app implements `AgentPorts` for events, subagents, and findings.
 
-> **Note:** The planner and objectives model were built for security projects, but the same runtime works for other scopes—swap the skill/tool catalog and prompts to fit the domain.
+**Skills format:** skill directories follow the open [Agent Skills](https://agentskills.io) (`agentskills`) `SKILL.md` layout (YAML frontmatter + Markdown body, optional `scripts/` / `references/` / `assets/`). Orchestrator extends that with product fields under `metadata:` (category, jobable, lifecycle, requires_clis, …) and standardized `scripts/run.py` entrypoints.
 
-**Skills format:** Skill directories follow the open [Agent Skills](https://agentskills.io) (`agentskills`) `SKILL.md` layout (YAML frontmatter + Markdown body, optional `scripts/` / `references/` / `assets/`). Orchestrator extends that with product fields under `metadata:` (category, jobable, lifecycle, requires_clis, …) and standardized `scripts/run.py` entrypoints.
+## How it works — the agent graph
 
-## How it works
-
-With LangGraph, Orchestrator takes a prompt, plans objectives, provisions a sandbox with the needed tools (from the catalog or skill descriptions), and executes—using (sub)agents as needed. On failure it replans to recover and resume. An Analyzer agent always runs at the end and drafts a markdown report from findings. After a run, the host can call `suggest_skills` with the project brief or findings to recommend the next skills to run.
+A prompt becomes a plan, a sandbox is provisioned with whatever the plan needs, and an agent loop executes it — looping back through a **replan** step on failure instead of just giving up. An Analyzer step always runs at the end and drafts a markdown report from findings. After a run, the host can call `suggest_skills` with the brief or findings to recommend what to run next.
 
 ```text
-prompt → plan → sandbox → provision → execute → recover → result → suggest next skills
+prompt → plan → sandbox → provision → execute ⇄ replan → result → suggest next skills
 ```
+
+This is the actual LangGraph graph (`orchestrator.agent.graph`) underneath that loop — shown generically, with no domain baked in:
 
 ```mermaid
 flowchart TB
+    START(("prompt")) --> GATE["gate<br/><i>drain operator guidance</i>"]
+    GATE --> AGENT["agent<br/><i>LLM turn: think / call a tool</i>"]
+    AGENT -- "tool call, under max_iterations" --> TOOLS["tools<br/><i>run the requested tool</i>"]
+    AGENT -- "no tool call, or max_iterations hit" --> DONE(("result"))
+    TOOLS --> RECOVER{"recover<br/><i>did the tool report an error?</i>"}
+    RECOVER -- "yes, under max_failure_replans" --> NUDGE["replan nudge<br/><i>inject a recovery instruction</i>"]
+    RECOVER -- "no, or replans exhausted" --> GATE
+    NUDGE --> GATE
 
-    %% =========================
-    %% ENTRY
-    %% =========================
-    HOST["Your Application<br/>API · Worker · CLI"]
-    PORTS["AgentPorts<br/>Events · Subagents · Findings · Guidance"]
-
-    HOST --> PORTS
-
-    %% =========================
-    %% ORCHESTRATOR
-    %% =========================
-    subgraph ORCH["ORCHESTRATOR"]
-        direction TB
-
-        API["Orchestrator API<br/>Plan · Run · Suggest Skills · Learn"]
-
-        GRAPH["LangGraph<br/>Agent Loop · Replanning"]
-
-        subgraph CAP["CAPABILITIES"]
-            direction LR
-            LEARN["LearnAuthoring / LearnLab<br/>Draft Skills & Tools"]
-            CATALOG["Skills & Tools Catalog<br/>skills/ · tools/catalog/"]
-        end
-
-        API --> GRAPH
-        API --> LEARN
-        LEARN --> CATALOG
-        GRAPH --> CATALOG
-    end
-
-    PORTS --> API
-
-    %% =========================
-    %% LLM
-    %% =========================
-    subgraph LLM["LLM STACK"]
-        direction TB
-
-        LC["LangChain Core<br/>LangChain LiteLLM"]
-        LITE["LiteLLM"]
-        PROVIDER["LLM Provider<br/>OpenRouter · OpenAI · Other Providers"]
-
-        LC --> LITE
-        LITE --> PROVIDER
-    end
-
-    %% =========================
-    %% EXECUTION
-    %% =========================
-    subgraph EXEC["EXECUTION ENVIRONMENT"]
-        direction TB
-
-        DOCKER["Docker Sandbox"]
-        RUNNER["Execution Runner<br/>run_binary · run_cli · run_report · run_glue"]
-        HELPERS["Skill Helpers<br/>orchestrator_tools client"]
-
-        DOCKER --> RUNNER
-        RUNNER --> HELPERS
-    end
-
-    %% =========================
-    %% CONNECTIONS
-    %% =========================
-    GRAPH --> LC
-    LEARN --> LC
-
-    GRAPH --> DOCKER
-    CATALOG --> DOCKER
-
-    %% =========================
-    %% RETURN PATH
-    %% =========================
-    BRIDGE["StreamSocketServer + RpcServer"]
-
-    HELPERS --> BRIDGE
-    BRIDGE --> PORTS
-
-    %% =========================
-    %% GITHUB-FRIENDLY STYLING
-    %% =========================
-
-    classDef entry fill:#ddf4ff,stroke:#0969da,color:#1f2328,stroke-width:1.5px
-    classDef orch fill:#fbefff,stroke:#8250df,color:#1f2328,stroke-width:1.5px
-    classDef llm fill:#fff8c5,stroke:#9a6700,color:#1f2328,stroke-width:1.5px
-    classDef exec fill:#dafbe1,stroke:#1a7f37,color:#1f2328,stroke-width:1.5px
-    classDef bridge fill:#f6f8fa,stroke:#57606a,color:#1f2328,stroke-width:1.5px
-
-    class HOST,PORTS entry
-    class API,GRAPH,LEARN,CATALOG orch
-    class LC,LITE,PROVIDER llm
-    class DOCKER,RUNNER,HELPERS exec
-    class BRIDGE bridge
+    classDef node fill:#fbefff,stroke:#8250df,color:#1f2328,stroke-width:1.5px
+    classDef io fill:#ddf4ff,stroke:#0969da,color:#1f2328,stroke-width:1.5px
+    classDef branch fill:#fff8c5,stroke:#9a6700,color:#1f2328,stroke-width:1.5px
+    class START,DONE io
+    class GATE,AGENT,TOOLS,NUDGE node
+    class RECOVER branch
 ```
 
-## Features
+- **`gate`** runs before every turn and injects any live operator guidance (a human steering a run mid-flight) as a message.
+- **`agent`** is one LLM turn with tools bound; it either calls a tool or produces a final answer.
+- **`tools` → `recover`** is the replan loop: a tool result that looks like an error gets a recovery nudge injected back into the conversation (bounded by `AGENT_MAX_FAILURE_REPLANS`) instead of the loop silently repeating the same failing call forever (bounded overall by `AGENT_MAX_ITERATIONS`).
+
+## Core features
 
 | Feature | Description |
 |---|---|
-| **Add tools or skills easily** | Draft new skills and tools from a single prompt, or add them as files. |
-| **Suggest next skills** | Pass the brief or findings to `suggest_skills` after a run. Example skills here were created by Orchestrator after runs. |
-| **Skill entrypoints** | Each skill’s `scripts/run.py` uses a built-in runner. The available entrypoints are:<br>• **run_binary**: Executes a compiled binary or executable file.<br>• **run_cli**: Runs a shell command-line interface, suitable for scripts or tools invoked from the shell.<br>• **run_report**: Gathers results and generates a markdown report from the skill's output.<br>• **run_glue**: Orchestrates multiple steps or tools in a single run, acting as a workflow or integration runner. |
-| **Skill linting** | `SkillLinter` / `lint-skill` checks Agent Skills layout (`SKILL.md` frontmatter, name/dir match, body refs) plus product `metadata:` so drafts and catalog skills stay compatible. |
-| **Flexible installs** | Install recipes: `apt`, `github_release`, `git_clone`, `pip`, or `custom` bash script.<br>Tool install priority:<br>&nbsp;&nbsp;• catalog<br>&nbsp;&nbsp;• if the tool is not in catalog, fallback to Skill instructions<br>&nbsp;&nbsp;• if a failure is detected due to missing tool, replan (LLM) |
-| **Tested tool installs** | Validate each new recipe in a learn-lab sandbox before production provision. |
-| **Live Streaming capability** | Library ships Unix **stream** + **RPC** servers (`StreamSocketServer`, `RpcServer`). Skill helpers in `skills/helpers/orchestrator_tools.py` are the matching clients (`ORCHESTRATOR_STREAM_SOCKET` / `ORCHESTRATOR_RPC_SOCKET` + `ORCHESTRATOR_RPC_TOKEN`). This allows custom tools/scripts to stream live updates to a listeneting UI element in a dashboard |
+| **Replanning, not just retrying** | A failed tool call injects a targeted recovery nudge (see graph above) rather than blindly repeating the same call; both the per-failure and total iteration counts are capped. |
+| **Prompting with cost visibility** | `orchestrator.utils.llm.chat_text` / `chat_json` is the whole LLM facade (LiteLLM underneath — swap providers via env, no code change). Wrap any call in `orchestrator.utils.llm_usage.purpose("...")` to tag it for cost/token reporting. |
+| **Add tools or skills easily** | Draft new skills and tools from a single prompt, or add them as files — see "Adding a tool, skill, or role" below. |
+| **Suggest next skills** | Pass the brief or findings to `suggest_skills` after a run. |
+| **Flexible installs** | Install recipes: `apt`, `github_release`, `git_clone`, `pip`, or `custom` bash script. Tool install priority: catalog → skill-provided install docs → LLM-planned fallback. |
+| **Tested tool installs** | Validate each new recipe in a learn-lab sandbox before it's used for real. |
+| **Live streaming** | Unix **stream** + **RPC** servers (`StreamSocketServer`, `RpcServer`); skill helpers in `skills/helpers/orchestrator_tools.py` are the matching clients, for custom tools to stream live progress to a host UI. |
 | **Extend as data** | Add a skill or catalog YAML with no code changes. |
-| **Recover & steer** | Auto-retry on errors; operators can inject live guidance to steer or replan. |
-| **Safe learning** | Draft new tools or skills, lab-test, then approve for use. |
+| **Safe learning** | Draft new tools or skills, lab-test, then approve for use — nothing self-modifies silently. |
 
-## API surface
+**API surface:** `plan()` / `run()` / `suggest_skills()` · `provision_cli` cascade (catalog → skill `INSTALL.md` → LLM) · failure nudges + `drain_operator_guidance()` · Learn (`suggest_tool` / `write_skill` / `LearnLab`) · skill runners + stream/RPC sockets.
 
-**Mechanics:** `plan()` / `run()` / `suggest_skills()` · `provision_cli` cascade (catalog → skill `INSTALL.md` → LLM) · failure nudges + `drain_operator_guidance()` · Learn (`suggest_tool` / `write_skill` / `LearnLab`) · skill runners + stream/RPC sockets.
+## Multi-agent brain: roles, A2A, and Dream
 
-**Caps:** sandbox (`provision_cli`, `run_cli`, `run_code`, …) · skills (`run_skill_script` → `scripts/run.py`, …) · host ports (objectives, findings, subagents) · optional stream/RPC bridge.
-
-## Brain: roles, agent-to-agent messaging, and Dream
-
-`orchestrator.brain` adds the pieces a *multi*-agent host needs on top of the single-agent runtime above: named **roles** a job can run as, **directed** messages between live jobs, and a **Dream** cycle that turns finished runs into lessons, consolidates them into playbooks, and proposes role changes — reviewed by a human before anything goes live.
+`orchestrator.brain` adds what a *multi*-agent host needs on top of the single-agent runtime above: named **roles** a job can run as (the CrewAI-style idea of "this run is the researcher, that run is the reviewer"), **directed** agent-to-agent messages between live jobs, and a **Dream** cycle that turns finished runs into lessons, consolidates them into playbooks, and proposes role changes — reviewed by a human before anything goes live.
 
 Storage-agnostic by design: all four pieces talk only to small protocols (`RoleStore`, `MessageStore`, `MemoryStore`, `ProposalStore` in `orchestrator.brain.protocols`). `orchestrator.brain.memory_backend` ships an in-process reference implementation of each, so the brain works with nothing but Python installed; a host swaps in its own (a database, an existing ORM, anything) without the brain's logic changing.
 
@@ -147,20 +88,23 @@ from orchestrator.brain import A2AHub, RoleRegistry, RoleRecord, tick
 from orchestrator.brain.memory_backend import InMemoryMemoryStore, InMemoryProposalStore, InMemoryRoleStore
 from orchestrator.utils.llm import chat_json
 
+# Roles — who an agent is this run
 roles = InMemoryRoleStore()
-roles.upsert_role(RoleRecord(role_id="recon", goal="map the target's footprint"))
+roles.upsert_role(RoleRecord(role_id="researcher", goal="gather and summarize sources"))
+roles.upsert_role(RoleRecord(role_id="reviewer", goal="check a researcher's draft for gaps"))
 registry = RoleRegistry(store=roles)
 
-hub = A2AHub()  # directed only — never a broadcast
-hub.send(sender_job_id="pm-1", recipient_job_id="recon-1", kind="request", content="start recon")
+# A2A — directed messages between live jobs, never a broadcast
+hub = A2AHub()
+hub.send(sender_job_id="pm-1", recipient_job_id="researcher-1", kind="request", content="start the brief")
 
-# Periodically (your own scheduler calls this — the library starts no threads):
+# Dream — periodically (your own scheduler calls this; the library starts no threads)
 result = tick(
     roles=roles,
     memory=InMemoryMemoryStore(),
     proposals=InMemoryProposalStore(),
     chat_json=chat_json,
-    finished_runs=[("recon-1", "recon", transcript_text)],
+    finished_runs=[("researcher-1", "researcher", transcript_text)],
 )
 ```
 
@@ -168,8 +112,7 @@ result = tick(
 - **A2A has real limits, not just a happy path.** `A2AHub.send`/`multisend` raise on self-messaging, on a per-pair message cap (stops two agents looping each other), and on exceeding `max_recipients` — failures are reported per-recipient, not as one all-or-nothing error.
 - **"Resume a finished agent" is a host hook, not an assumption.** `send(..., wake=your_callback)` fires your callback with the recipient's job id; the brain has no opinion on how your runtime actually resumes a job.
 - **`RoleRegistry` tracks skill changes, not just role edits** — `unbound_skills()` returns skills nothing is bound to yet, which is exactly what Dream's role proposals act on as your skill catalog grows.
-
-Tests: `pytest tests/brain` (22 cases covering registry cache/invalidation, A2A directed/capped/self-message/wake semantics, and the full curate → synthesize → propose → approve/reject round trip against a stubbed LLM).
+- **Dreaming is consolidation, not just logging.** `render_gist` turns one finished run into a lesson; `synthesize_playbooks` periodically merges many lessons of the same kind into a reusable playbook, so the Nth run of a role benefits from the first N-1.
 
 ## MCP servers & Marketplace
 
@@ -195,43 +138,72 @@ found = scan_all(repo)  # {"skills": [...], "agents": [...], "mcp_pointers": [..
 - **A clone directory's name is never trusted.** `git clone` always lands at `.../repo` — `McpInstaller` derives the real id from the repo URL (or the package's own `name`), not the throwaway folder name.
 - **Marketplace scanning stages, it doesn't install.** `scan_all` only reads files as text/JSON/YAML; turning a finding into a live skill, role, or MCP server is a separate, explicit step the host controls.
 
-Tests: `pytest tests/mcp tests/marketplace` (30 cases covering manifest/npm/npx/stdio-inference installs, the generic-clone-dir id bug, and the three marketplace scanners).
+## Adding a tool, skill, or role
+
+Everything below is adding a file — no runtime code changes needed.
+
+**A tool** — drop a YAML file in `tools/catalog/`:
+
+```yaml
+# tools/catalog/mytool.yaml
+id: mytool
+name: mytool
+description: What mytool does, in one line.
+tier: catalog
+binary: mytool
+binaries: [mytool]
+install:
+  - type: apt          # or github_release / git_clone / pip / custom
+    packages: [mytool]
+verify:
+  - command: mytool --version
+tags: [cli]
+```
+Validate it with `python examples/thin_client.py test-tool tools/catalog/mytool.yaml` (runs the install + verify steps in a learn-lab sandbox before anything production-facing uses it).
+
+**A skill** — drop a directory with a `SKILL.md` in `skills/`:
+
+```markdown
+---
+name: my-skill
+description: One line — when an agent should use this skill.
+compatibility: Requires mytool
+allowed-tools: sandbox_setup run_skill_script skills_list skill_view
+metadata:
+  version: 1.0.0
+  category: data
+  jobable: 'true'
+  lifecycle: short
+---
+
+## Goal
+What this skill does and how `scripts/run.py` is invoked.
+```
+Lint it with `python examples/thin_client.py lint-skill my-skill` (checks frontmatter, name/dir match, and body references match `SkillLinter`'s rules). Or skip authoring by hand entirely: `LearnAuthoring.write_skill("fetch a URL and summarize its headers")` drafts both the skill and, if needed, a matching tool recipe.
+
+**A role** — for the multi-agent brain, no file needed, just a store write:
+
+```python
+from orchestrator.brain.protocols import RoleRecord
+roles.upsert_role(RoleRecord(role_id="reviewer", goal="check a draft for gaps", protected=False))
+```
+A `protected=True` role can't be overwritten by an auto-approved Dream proposal — reserve that for roles whose identity must never silently drift.
 
 ## Usage
 
-Use `examples/thin_client.py` (one-shot or interactive).
+Use `examples/thin_client.py` (one-shot or interactive):
 
 ```bash
-pip install -r requirements.txt && cp .env.example .env   # set OPENROUTER_API_KEY
+pip install -e . && cp .env.example .env   # set OPENROUTER_API_KEY
 
-# Plan (no sandbox)
-python examples/thin_client.py plan "probe example.com with httpx"
-
-# Draft a catalog tool (YAML + install recipe; optional learn-lab test)
-python examples/thin_client.py suggest-tools "add ffuf fuzzer"
-
-# Draft a new skill (LLM + linter; may also suggest a missing tool)
-python examples/thin_client.py draft-skill "http banner grabber using curl"
-
-# Execute in Docker
-python examples/thin_client.py run "probe example.com with httpx" --plan-first --remove
-
-# Catalog helpers
+python examples/thin_client.py plan "fetch https://example.com and extract the title"
+python examples/thin_client.py suggest-tools "add a yq fuzzer for YAML diffing"
+python examples/thin_client.py draft-skill "fetch a URL and summarize its headers"
+python examples/thin_client.py run "fetch https://example.com and extract the title" --plan-first --remove
 python examples/thin_client.py list-skills
 python examples/thin_client.py list-tools
-python examples/thin_client.py suggest-skills "scan ports with nmap"
-python examples/thin_client.py lint-skill domain-enum
-python examples/thin_client.py test-tool tools/catalog/httpx.yaml
-```
-
-```python
-from orchestrator import LearnAuthoring, Orchestrator
-
-orch = Orchestrator()
-orch.plan("probe example.com with httpx")
-orch.run("probe example.com", plan_first=True, remove_sandbox=True)
-LearnAuthoring.suggest_tool("add ffuf fuzzer")
-LearnAuthoring.write_skill("http banner grabber using curl")
+python examples/thin_client.py lint-skill my-skill
+python examples/thin_client.py test-tool tools/catalog/jq.yaml
 ```
 
 Docker is required for `run` / Learn lab / `provision_cli`. Env: see `.env.example`. Layout: `src/orchestrator/{agent,tools,runtime,skills,learn,brain,mcp,marketplace}` · sample `skills/` · `tools/catalog/`.

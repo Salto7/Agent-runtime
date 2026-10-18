@@ -57,7 +57,10 @@ def _iter_dirs(root: Path, *, max_depth: int = 8) -> list[Path]:
         except OSError:
             continue
         for child in children:
-            if not child.is_dir() or _is_skipped_dir(child.name):
+            # Symlinked dirs are never descended into — a source can plant a
+            # symlink cycle (or a link pointing back at an ancestor) to make
+            # this walk run long past what its real file count would.
+            if child.is_symlink() or not child.is_dir() or _is_skipped_dir(child.name):
                 continue
             found.append(child)
             stack.append((child, depth + 1))

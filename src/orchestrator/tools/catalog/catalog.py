@@ -22,9 +22,7 @@ logger = logging.getLogger(__name__)
 _REPO_RE = re.compile(
     r"^(?:https?://github\.com/)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$"
 )
-_TRANSITIVE: dict[str, list[str]] = {
-    "ai-osint-subsidiaries": ["domain-enum"],
-}
+_TRANSITIVE: dict[str, list[str]] = {}
 _GH_SCRIPT = Path(__file__).with_name("assets") / "install_github_release.sh"
 
 
@@ -187,9 +185,9 @@ class CustomInstallStep(InstallStep, step_type="custom"):
             packages: [fallback-pkg]
 
         # Or reference the tool's install script (same stem as the YAML):
-        # tools/catalog/dnsx.yaml + tools/catalog/dnsx.sh
+        # tools/catalog/mytool.yaml + tools/catalog/mytool.sh
           - type: custom
-            command: dnsx.sh
+            command: mytool.sh
 
     ``command`` is either an inline shell line, or a relative path to the single
     allowed ``{tool_id}.sh`` beside ``{tool_id}.yaml`` (skill-style relative path).

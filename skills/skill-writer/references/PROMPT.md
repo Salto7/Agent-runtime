@@ -23,7 +23,7 @@ Reply with **JSON only**:
 
 - `name` — lowercase kebab-case; matches directory name.
 - `description` — one line, ≤1024 chars; when to use this skill.
-- `compatibility` — optional, ≤500 chars (e.g. `Requires nmap`). Keep it short;
+- `compatibility` — optional, ≤500 chars (e.g. `Requires jq`). Keep it short;
   do not write install prose here.
 - `allowed-tools` — **one space-separated string**. Prefer the host-provided
   default list for the authoring mode (built from the live capability registry).
@@ -48,8 +48,8 @@ Install step types (same as tools-suggestor): `apt`, `github_release`,
 
 ### Mode A — on-disk catalog CLI
 
-Mirror **network-scanner**: `run_binary` wrapper. No `references/INSTALL.md`.
-Provision comes from the registry.
+Mirror a thin catalog wrapper (e.g. a `jq`-style one-CLI skill): `run_binary`
+wrapper. No `references/INSTALL.md`. Provision comes from the registry.
 
 ### Mode A2 — CLI **not** in catalog (host attached a tools-suggestor recipe)
 
@@ -89,8 +89,8 @@ Only when the host says capability and there is no recipe. Use `run_cli` /
 
 ### Fuller packages
 
-Multi-file skills (domain-enum): `scripts/run.py` may use `run_cli` / `run_glue`.
-Still only `run_binary` for catalog / proposed CLIs.
+Multi-file skills (several library modules under `scripts/lib/`): `scripts/run.py`
+may use `run_cli` / `run_glue`. Still only `run_binary` for catalog / proposed CLIs.
 
 ## Other rules
 
@@ -101,17 +101,17 @@ Still only `run_binary` for catalog / proposed CLIs.
 
 ```yaml
 ---
-name: network-scanner
-description: nmap in the project sandbox (recon). In-scope hosts only.
-compatibility: Requires nmap
+name: json-filter
+description: jq in the project sandbox — filter/transform JSON data.
+compatibility: Requires jq
 allowed-tools: sandbox_setup run_skill_script sandbox_status skills_list skill_view list_objectives update_objective_status record_finding list_findings
 metadata:
-  version: 1.5.0
-  category: recon
-  tags: scanner,network,recon
-  aliases: tool-nmap
-  requires_clis: nmap
+  version: 1.0.0
+  category: data
+  tags: json,filter,data
+  aliases: tool-jq
+  requires_clis: jq
   jobable: 'true'
-  lifecycle: long
+  lifecycle: short
 ---
 ```

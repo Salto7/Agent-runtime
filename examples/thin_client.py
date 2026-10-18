@@ -5,12 +5,12 @@ One-shot::
 
     python examples/thin_client.py list-skills
     python examples/thin_client.py list-tools
-    python examples/thin_client.py suggest-tools "add ffuf fuzzer"
+    python examples/thin_client.py suggest-tools "add a yq fuzzer for YAML diffing"
     # (TTY) prompts to test installer in learn-lab; on fail, asks for a fix prompt
-    python examples/thin_client.py suggest-skills "scan ports with nmap"
-    python examples/thin_client.py draft-skill "http banner grabber using curl"
-    python examples/thin_client.py lint-skill network-scanner
-    python examples/thin_client.py plan "probe example.com with httpx"
+    python examples/thin_client.py suggest-skills "filter a JSON API response"
+    python examples/thin_client.py draft-skill "fetch a URL and summarize its headers"
+    python examples/thin_client.py lint-skill json-filter
+    python examples/thin_client.py plan "fetch https://example.com and extract the title"
     python examples/thin_client.py run "write hello.txt in /workspace" --remove
     python examples/thin_client.py test-tool tools/catalog/jq.yaml
 
@@ -19,7 +19,7 @@ Interactive console (no subcommand)::
     python examples/thin_client.py
     orch> help
     orch> list-tools
-    orch> plan "probe example.com with httpx"
+    orch> plan "fetch https://example.com and extract the title"
     # Tab / double-Tab completes and lists commands; Ctrl+C exits (stops learn-lab if running)
 """
 
