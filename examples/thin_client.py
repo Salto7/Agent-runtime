@@ -10,8 +10,11 @@ One-shot::
     python examples/thin_client.py suggest-skills "filter a JSON API response"
     python examples/thin_client.py draft-skill "fetch a URL and summarize its headers"
     python examples/thin_client.py lint-skill json-filter
+    python examples/thin_client.py list-roles
     python examples/thin_client.py plan "fetch https://example.com and extract the title"
-    python examples/thin_client.py run "write hello.txt in /workspace" --remove
+    python examples/thin_client.py run "write hello.txt in /workspace" --role builder --remove
+    python examples/thin_client.py run "research X and report" --project --role researcher
+    python examples/thin_client.py dream
     python examples/thin_client.py test-tool tools/catalog/jq.yaml
 
 Interactive console (no subcommand)::
@@ -38,7 +41,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from dotenv import load_dotenv
 
-from orchestrator import LearnAuthoring, LearnLab, Orchestrator
+from orchestrator import Orchestrator
+from orchestrator.learn import LearnAuthoring
+from orchestrator.learn.lab import LearnLab
 
 META_COMMANDS = ("help", "commands", "?", "exit", "quit")
 PROMPT = "orch> "
@@ -76,7 +81,7 @@ def _emit(data: object) -> None:
 def _stop_learn_lab() -> None:
     """Remove learn-lab container(s) if present (safe no-op when absent)."""
     try:
-        result = LearnLab.delete()
+        result = LearnLab.shared().delete()
     except Exception as exc:
         logger.warning("learn-lab cleanup failed: %s", exc)
         return
@@ -172,7 +177,7 @@ def _suggest_test_loop(result: dict, *, prompt: str) -> int:
 
         logger.info("Starting fresh learn-lab sandbox…")
         try:
-            test = LearnLab.test_tool_install(
+            test = LearnLab.shared().test_tool_install(
                 yaml_text=str(result.get("yaml") or ""),
                 install_script=str(result.get("install_script") or ""),
             )
@@ -223,8 +228,14 @@ def _suggest_test_loop(result: dict, *, prompt: str) -> int:
 
 
 def cmd_list_skills(orch: Orchestrator, args: argparse.Namespace) -> int:
-    rows = orch.list_skills(jobable_only=args.jobable)
-    _emit(rows)
+    del args
+    _emit(orch.list_skills())
+    return 0
+
+
+def cmd_list_roles(orch: Orchestrator, args: argparse.Namespace) -> int:
+    del args
+    _emit(orch.list_roles())
     return 0
 
 
@@ -277,7 +288,19 @@ def cmd_draft_skill(orch: Orchestrator, args: argparse.Namespace) -> int:
 def cmd_lint_skill(orch: Orchestrator, args: argparse.Namespace) -> int:
     del orch
     try:
-        result = LearnAuthoring.lint_skill_dir(args.skill)
+        path = Path(args.skill)
+        if not path.is_dir():
+            path = ROOT / "skills" / args.skill
+        if not (path / "SKILL.md").is_file():
+            raise ValueError(f"no SKILL.md in {path}")
+        files = {
+            p.relative_to(path).as_posix(): p.read_text(encoding="utf-8", errors="replace")
+            for p in sorted(path.rglob("*"))
+            if p.is_file() and p.name != "SKILL.md" and "__pycache__" not in p.parts
+        }
+        result = LearnAuthoring.lint_skill(
+            name=path.name, skill_md=(path / "SKILL.md").read_text(encoding="utf-8"), files=files
+        )
     except ValueError as exc:
         logger.error("error: %s", exc)
         return 1
@@ -286,37 +309,55 @@ def cmd_lint_skill(orch: Orchestrator, args: argparse.Namespace) -> int:
 
 
 def cmd_plan(orch: Orchestrator, args: argparse.Namespace) -> int:
-    result = orch.plan(args.prompt, skill_names=args.skill or None)
+    result = orch.plan(args.prompt, mode=args.mode, role_ids=args.role or None)
     if result.error:
         logger.error("error: %s", result.error)
         return 1
-    logger.info("# skills: %s\n", ", ".join(result.skills) or "(none)")
+    logger.info("# roles: %s\n", ", ".join(result.role_ids) or "(none)")
     logger.info("%s", result.plan)
     return 0 if result.ok else 1
 
 
 def cmd_run(orch: Orchestrator, args: argparse.Namespace) -> int:
-    result = orch.run(
-        args.prompt,
-        skill_names=args.skill or None,
-        session_id=args.session,
-        remove_sandbox=args.remove,
-        plan_first=args.plan_first,
-        auto_skills=not args.no_auto_skills,
-    )
-    if result.plan:
-        logger.info("--- plan ---\n%s\n--- output ---", result.plan)
+    """One role (default) or the whole crew (--project)."""
+    if args.project:
+        result = orch.run_project(
+            args.prompt, role_ids=args.role or None, project_id=args.session,
+            remove_sandbox=args.remove,
+        )
+    else:
+        result = orch.run(
+            args.prompt, role=(args.role[0] if args.role else ""), skill_names=args.skill or None,
+            project_id=args.session, remove_sandbox=args.remove,
+        )
     logger.info("%s", result.output or "(empty)")
     if result.error:
         logger.error("error: %s", result.error)
-    logger.info(
-        "\n--- ok=%s skills=%s iterations=%s sandbox=%s ---",
-        result.ok,
-        result.skills,
-        result.iterations,
-        result.sandbox_name,
-    )
+    logger.info("\n--- ok=%s status=%s roles=%s project=%s ---",
+                result.ok, result.status, result.role_ids, result.project_id)
     return 0 if result.ok else 1
+
+
+def cmd_memory_health(orch: Orchestrator, args: argparse.Namespace) -> int:
+    del args
+    health = orch.memory_health()
+    _emit(health)
+    return 0 if health.get("ok") else 1
+
+
+def cmd_project(orch: Orchestrator, args: argparse.Namespace) -> int:
+    """Plan + scheduled execution (objectives with dependencies, replan on failure)."""
+    pid = orch.start_project(args.prompt, project_id=args.session)
+    logger.info("project %s started", pid)
+    state = orch.wait_project(pid, timeout=args.timeout)
+    _emit(state)
+    return 0 if state["status"] == "completed" else 1
+
+
+def cmd_dream(orch: Orchestrator, args: argparse.Namespace) -> int:
+    del args
+    _emit(orch.dream())
+    return 0
 
 
 def cmd_test_tool(orch: Orchestrator, args: argparse.Namespace) -> int:
@@ -328,7 +369,7 @@ def cmd_test_tool(orch: Orchestrator, args: argparse.Namespace) -> int:
         script = Path(args.script).read_text(encoding="utf-8")
     elif path.with_suffix(".sh").is_file():
         script = path.with_suffix(".sh").read_text(encoding="utf-8")
-    result = LearnLab.test_tool_install(yaml_text=yaml_text, install_script=script)
+    result = LearnLab.shared().test_tool_install(yaml_text=yaml_text, install_script=script)
     _emit(result)
     return 0 if result.get("ok") else 1
 
@@ -339,8 +380,22 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=False)
 
     s = sub.add_parser("list-skills", help="List skill catalog")
-    s.add_argument("--jobable", action="store_true")
     s.set_defaults(func=cmd_list_skills)
+
+    s = sub.add_parser("list-roles", help="List roles (manager, analyzer, specialists)")
+    s.set_defaults(func=cmd_list_roles)
+
+    s = sub.add_parser("project", help="Plan and run objectives with the scheduler (dependencies, replan)")
+    s.add_argument("prompt")
+    s.add_argument("--session", default=None, help="project id")
+    s.add_argument("--timeout", type=float, default=None)
+    s.set_defaults(func=cmd_project)
+
+    s = sub.add_parser("memory-health", help="Check the Cognee memory sidecar")
+    s.set_defaults(func=cmd_memory_health)
+
+    s = sub.add_parser("dream", help="Run one dream cycle (gists, playbooks, proposals)")
+    s.set_defaults(func=cmd_dream)
 
     s = sub.add_parser("list-tools", help="List tools/catalog CLIs")
     s.set_defaults(func=cmd_list_tools)
@@ -361,18 +416,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("skill", help="Skill name (under skills/) or path to skill dir")
     s.set_defaults(func=cmd_lint_skill)
 
-    s = sub.add_parser("plan", help="Plan only (no sandbox execution)")
+    s = sub.add_parser("plan", help="Plan only (no execution)")
     s.add_argument("prompt")
-    s.add_argument("--skill", action="append", default=[])
+    s.add_argument("--mode", choices=("project", "job"), default="project")
+    s.add_argument("--role", action="append", default=[])
     s.set_defaults(func=cmd_plan)
 
-    s = sub.add_parser("run", help="Plan (optional) + execute in Docker sandbox")
+    s = sub.add_parser("run", help="Run a role (or --project: manager + specialists + analyzer)")
     s.add_argument("prompt")
+    s.add_argument("--role", action="append", default=[])
     s.add_argument("--skill", action="append", default=[])
-    s.add_argument("--session", default="demo")
-    s.add_argument("--remove", action="store_true")
-    s.add_argument("--plan-first", action="store_true")
-    s.add_argument("--no-auto-skills", action="store_true")
+    s.add_argument("--project", action="store_true", help="Run the whole crew")
+    s.add_argument("--session", default="demo", help="project id / sandbox key")
+    s.add_argument("--remove", action="store_true", help="Remove the sandbox afterwards")
     s.set_defaults(func=cmd_run)
 
     s = sub.add_parser("test-tool", help="Install/verify a catalog YAML in learn-lab")

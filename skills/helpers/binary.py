@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import shutil
-from abc import ABC, abstractmethod
 from pathlib import Path
 
 _WRAPPER_MARKERS = (
@@ -16,15 +15,7 @@ _WRAPPER_MARKERS = (
 )
 
 
-class BinaryResolver(ABC):
-    """Locate an executable by name on PATH / known prefixes."""
-
-    @abstractmethod
-    def resolve(self, binary: str) -> str | None:
-        """Return absolute path to a usable binary, or None."""
-
-
-class NativeBinaryResolver(BinaryResolver):
+class NativeBinaryResolver:
     """Prefer ELF under /usr/local/bin; refuse pip/setuptools wrappers."""
 
     def resolve(self, binary: str) -> str | None:

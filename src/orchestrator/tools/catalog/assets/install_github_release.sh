@@ -25,7 +25,7 @@ import json, sys, urllib.request
 api_url, needle, out_url, out_name = sys.argv[1:5]
 req = urllib.request.Request(
     api_url,
-    headers={"Accept": "application/vnd.github+json", "User-Agent": "orchestrator-catalog-provision"},
+    headers={"Accept": "application/vnd.github+json", "User-Agent": "peon-catalog-provision"},
 )
 with urllib.request.urlopen(req, timeout=60) as resp:
     data = json.load(resp)

@@ -7,14 +7,18 @@ import json
 import re
 from typing import Any
 
-_TRUE = frozenset("1 true yes y on".split())
-_FALSE = frozenset("0 false no n off".split())
-_SEP = re.compile(r"[_\s]+")
+_TRUE = frozenset(["1", "true", "yes", "y", "on"])
+_FALSE = frozenset(["0", "false", "no", "n", "off"])
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
-_DASH_US = re.compile(r"[-_]+")
+_KEBAB = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
 _JSON_OBJ = re.compile(r"\{.*\}", re.S)
-_THINK = frozenset("thinking reasoning thought".split())
+_THINK = frozenset(["thinking", "reasoning", "thought"])
+
+
+def is_kebab(value: str) -> bool:
+    """True for a lowercase kebab-case id (``nmap``, ``http-prober``)."""
+    return bool(_KEBAB.match((value or "").strip()))
 
 
 def as_bool(value: Any, *, default: bool = False) -> bool:
@@ -39,23 +43,17 @@ def as_str_list(value: Any) -> list[str]:
     return [text] if text else []
 
 
-def unique(items: list[str]) -> list[str]:
-    return list(dict.fromkeys(i for i in items if i))
-
-
-def fold_keys(token: str) -> list[str]:
-    """Match keys: case / separators / punctuation stripped."""
-    text = (token or "").strip().lower()
-    return unique([text, _SEP.sub("-", text).strip("-"), _NON_ALNUM.sub("", text)]) if text else []
-
-
-def name_forms(name: str) -> set[str]:
-    """Mention variants: hyphen / underscore / space."""
-    base = (name or "").strip().lower()
-    if not base:
-        return set()
-    spaced = _DASH_US.sub(" ", base)
-    return {base, spaced, spaced.replace(" ", "-"), spaced.replace(" ", "_")}
+def unique(values: Any) -> list[str]:
+    """Order-preserving dedupe of stringifiable items (empty dropped)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in values or ():
+        item = str(raw).strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
 
 
 def plain_text(content: Any) -> str:

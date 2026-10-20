@@ -1,4 +1,4 @@
-"""Skill draft helpers: catalog resolution, SKILL.md normalize, run.py ensure."""
+"""Skill draft helpers: catalog resolution and Claude Agent Skill shaping."""
 
 from __future__ import annotations
 
@@ -8,29 +8,19 @@ from typing import Any
 
 import yaml
 
-from orchestrator.capabilities import REGISTRY, default_allowed_tools, ensure_registered
-from orchestrator.skills.misc.utils import (
-    MAX_COMPATIBILITY_LEN,
-    LintIssue,
-    coerce_lifecycle,
-    dump_skill_md,
-    extract_file_refs,
-    normalize_category,
-    parse_frontmatter_yaml,
-    truncate_compat,
-    valid_skill_name,
+from orchestrator.skills.author import (
+    SCRIPT_SH,
+    lint_claude_files,
+    shape_files,
+    shape_skill_md,
 )
-from orchestrator.skills.provision import METADATA_TOP_LEVEL_FIELDS, SkillLinter
+from orchestrator.skills.common import parse_frontmatter_yaml, valid_skill_name
 from orchestrator.tools.catalog import ToolCatalog
-from orchestrator.utils.install_docs import has_install_fence
+from orchestrator.tools.install_docs import has_install_fence
 from orchestrator.utils.strings import as_str_list, unique
 
-RUN_PY = "scripts/run.py"
 INSTALL_GUIDE = "references/INSTALL.md"
-_RUN_BINARY_RE = re.compile(r'run_binary\(\s*["\']([^"\']+)["\']')
 _TOKEN_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9._+-]{1,31}")
-_GENERIC_ALLOWED = frozenset({"bash", "read", "write"})
-_EXEC_ALLOWED = frozenset({"run_skill_script", "run_cli", "run_code", "provision_cli"})
 # Same install taxonomy as tools-suggestor / CatalogProvisioner.
 CATALOG_INSTALL_TYPES = ("apt", "github_release", "git_clone", "pip", "custom")
 
@@ -39,15 +29,24 @@ __all__ = [
     "CATALOG_INSTALL_TYPES",
     "CatalogResolution",
     "INSTALL_GUIDE",
-    "RUN_PY",
     "authoring_prompt",
     "catalog_summaries",
+    "draft_binary",
     "ensure_skill_entry",
+    "filter_catalog",
+    "finalize_skill_payload",
     "install_guide_markdown",
+    "install_recipe_from_suggestion",
     "lint_draft",
     "parse_skill_payload",
+    "propose_missing_tool",
     "prompt_catalog_hits",
     "proposed_tool_match",
+    "skill_prompt",
+    "skill_result_dict",
+    "tool_replan_human",
+    "tool_suggest_human",
+    "tool_suggestion_from_payload",
     "valid_skill_name",
 ]
 
@@ -100,9 +99,7 @@ def resolve_catalog_keys(keys: list[str]) -> CatalogResolution:
 
 def prompt_catalog_hits(prompt: str) -> list[dict[str, str]]:
     """Catalog tools named in free text (match-only; ignores unknown tokens)."""
-    return resolve_catalog_keys(
-        [t.lower() for t in _TOKEN_RE.findall(prompt or "")]
-    ).matched
+    return resolve_catalog_keys([t.lower() for t in _TOKEN_RE.findall(prompt or "")]).matched
 
 
 def proposed_tool_match(suggestion: dict[str, Any]) -> dict[str, str]:
@@ -114,10 +111,178 @@ def proposed_tool_match(suggestion: dict[str, Any]) -> dict[str, str]:
     return {"id": tid, "binary": binary, "description": desc[:240]}
 
 
-def install_guide_markdown(
-    *, yaml_text: str = "", notes: str = "", binary: str = ""
+def skill_prompt(skill_name: str) -> str:
+    """Read ``skills/<name>/references/PROMPT.md``."""
+    from pathlib import Path
+
+    from orchestrator.config import get_config
+
+    path = Path(get_config().skills_dir) / skill_name / "references" / "PROMPT.md"
+    if not path.is_file():
+        raise FileNotFoundError(f"missing prompt for skill {skill_name}: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def tool_suggestion_from_payload(payload: dict[str, Any], *, author: str = "") -> dict[str, Any]:
+    """Normalize tools-suggestor / OpenCode JSON into a recipe dict."""
+    if not isinstance(payload, dict):
+        raise RuntimeError("tools-suggestor returned non-object JSON")
+    yaml_text = str(payload.get("yaml") or "").strip()
+    if not yaml_text:
+        raise RuntimeError("tools-suggestor returned empty yaml")
+    try:
+        parsed = yaml.safe_load(yaml_text)
+    except yaml.YAMLError as exc:
+        raise RuntimeError(f"suggested YAML is invalid: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("suggested YAML must be a mapping")
+    tid = str(payload.get("id") or parsed.get("id") or "").strip()
+    if not tid:
+        raise RuntimeError("suggested tool missing id")
+    out: dict[str, Any] = {
+        "id": tid,
+        "yaml": yaml_text,
+        "install_script": str(payload.get("install_script") or "").strip(),
+        "notes": str(payload.get("notes") or "").strip(),
+        "parsed": parsed,
+    }
+    if author:
+        out["author"] = author
+    return out
+
+
+def install_recipe_from_suggestion(suggestion: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": suggestion["id"],
+        "yaml": suggestion["yaml"],
+        "install_script": suggestion.get("install_script") or "",
+        "notes": suggestion.get("notes") or "",
+    }
+
+
+def tool_suggest_human(prompt: str) -> str:
+    from orchestrator.prompts import CATALOG_INSTALL_PREFER
+
+    return (
+        f"Operator request:\n{prompt}\n\n"
+        f"Target image: the Peon sandbox (Kali). {CATALOG_INSTALL_PREFER}\n\n"
+        f"Existing catalog tools (avoid duplicate ids):\n"
+        f"{yaml.safe_dump(catalog_summaries(), sort_keys=False)}"
+    )
+
+
+def tool_replan_human(
+    *,
+    prompt: str,
+    yaml_text: str,
+    install_script: str = "",
+    error: str = "",
+    feedback: str = "",
 ) -> str:
-    """Skill ``references/INSTALL.md`` body for InstallResolver step #2."""
+    from orchestrator.prompts import CATALOG_INSTALL_PREFER
+
+    text = (prompt or "").strip() or "Revise the catalog install recipe."
+    fix = (feedback or "").strip()
+    parts = [
+        f"Operator request:\n{text}",
+        f"Previous YAML (failed install test):\n```yaml\n{yaml_text}\n```",
+        f"Previous install script:\n```bash\n{install_script or '(none)'}\n```",
+        f"Install/test error:\n{error or '(unknown)'}",
+    ]
+    if fix:
+        parts.append(f"Operator fix guidance:\n{fix}")
+    parts.append(
+        "Produce a revised catalog YAML that is more likely to install in the "
+        "Peon sandbox (Kali). Keep the same tool intent as the operator "
+        "request; fix install/verify based on the error"
+        + (" and fix guidance." if fix else ".")
+        + f" {CATALOG_INSTALL_PREFER}\n"
+        f"Existing catalog tools:\n{yaml.safe_dump(catalog_summaries(), sort_keys=False)}"
+    )
+    return "\n\n".join(parts)
+
+
+def filter_catalog(catalog: list[dict[str, str]], tools: list[str] | None) -> list[dict[str, str]]:
+    if not tools:
+        return catalog
+    wanted = {t.strip().lower() for t in tools if str(t).strip()}
+    return [t for t in catalog if t["id"] in wanted] or catalog
+
+
+def propose_missing_tool(
+    prompt: str, suggest_fn
+) -> tuple[dict[str, Any] | None, list[dict[str, str]], list[dict[str, Any]]]:
+    """If prompt names no catalog CLI, call ``suggest_fn`` and shape recipes."""
+    if prompt_catalog_hits(prompt):
+        return None, [], []
+    suggestion = suggest_fn(prompt)
+    return (
+        suggestion,
+        [proposed_tool_match(suggestion)],
+        [install_recipe_from_suggestion(suggestion)],
+    )
+
+
+def finalize_skill_payload(
+    payload: dict[str, Any],
+    *,
+    prompt: str,
+    proposed: list[dict[str, str]],
+    install_recipes: list[dict[str, Any]],
+    suggested: list[str] | None = None,
+) -> tuple[str, str, dict[str, str], list[str], str, dict[str, Any]]:
+    """parse → ensure_skill_entry → lint_draft (shared by chat-json + OpenCode)."""
+    name, skill_md, files, sug = parse_skill_payload(
+        {
+            **payload,
+            "suggested_tools": payload.get("suggested_tools") or suggested or [],
+        }
+    )
+    if proposed and not sug:
+        sug = [proposed[0]["id"]]
+    skill_md, files, mode = ensure_skill_entry(
+        skill_md,
+        files,
+        name=name,
+        suggested_tools=sug,
+        prompt=prompt,
+        proposed=proposed,
+        install_recipes=install_recipes,
+    )
+    lint = lint_draft(skill_md, files, mode=mode)
+    return name, skill_md, files, sug, mode, lint
+
+
+def skill_result_dict(
+    *,
+    name: str,
+    skill_md: str,
+    files: dict[str, str],
+    notes: str,
+    suggested: list[str],
+    mode: str,
+    lint: dict[str, Any],
+    tool_suggestion: dict[str, Any] | None = None,
+    author: str = "",
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "name": name,
+        "skill_md": skill_md,
+        "files": files,
+        "notes": notes,
+        "suggested_tools": suggested,
+        "mode": mode,
+        "lint": lint,
+    }
+    if author:
+        result["author"] = author
+    if tool_suggestion is not None:
+        result["tool_suggestion"] = install_recipe_from_suggestion(tool_suggestion)
+    return result
+
+
+def install_guide_markdown(*, yaml_text: str = "", notes: str = "", binary: str = "") -> str:
+    """Portable ``references/INSTALL.md`` for a CLI that is not already on PATH."""
     block: dict[str, Any] = {}
     text = (yaml_text or "").strip()
     if text:
@@ -140,8 +305,7 @@ def install_guide_markdown(
     lines = [
         f"# Install ({cli})",
         "",
-        "Used by `provision_cli` / `InstallResolver` when this binary is not in "
-        "`tools/catalog` (cascade: catalog → skill docs → LLM).",
+        "Install this CLI when it is not already on PATH.",
         "",
     ]
     if note:
@@ -166,9 +330,7 @@ def _clis_from_frontmatter(data: dict[str, Any]) -> list[str]:
     return clis
 
 
-def _merge_matched(
-    primary: CatalogResolution, extra: CatalogResolution
-) -> CatalogResolution:
+def _merge_matched(primary: CatalogResolution, extra: CatalogResolution) -> CatalogResolution:
     """Union matched tools; keep ``missing`` only from ``primary`` (declared CLIs)."""
     seen = {m["id"] for m in primary.matched}
     matched = list(primary.matched)
@@ -233,214 +395,22 @@ def resolve_intent(
     return resolution
 
 
-def _coerce_allowed_tools(raw: Any, *, mode: str) -> str:
-    default = default_allowed_tools(mode=mode)
-    if isinstance(raw, list):
-        tokens = [str(x).strip() for x in raw if str(x).strip()]
-    elif raw is None:
-        tokens = []
-    else:
-        tokens = [t for t in str(raw).split() if t.strip()]
-    lower = {t.lower() for t in tokens}
-    if (
-        not tokens
-        or lower.issubset(_GENERIC_ALLOWED)
-        or not (lower & _EXEC_ALLOWED)
-        or (mode == "capability" and not (lower & {"run_cli", "run_code"}))
-    ):
-        return default
-    ensure_registered()
-    registered = set(REGISTRY.tool_map())
-    kept = [t for t in tokens if t in registered]
-    if mode == "catalog_wrapper" and "run_skill_script" not in kept:
-        return default
-    missing = [t for t in default.split() if t not in kept]
-    return " ".join(unique([*kept, *missing])) if missing else " ".join(kept) or default
-
-
-def normalize_skill_md(
-    skill_md: str, *, name: str, mode: str = "catalog_wrapper"
-) -> str:
-    parsed = parse_frontmatter_yaml(skill_md)
-    if not parsed:
-        return skill_md
-    data, body = parsed
-    meta = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
-    for key in list(data.keys()):
-        if key in METADATA_TOP_LEVEL_FIELDS and key != "metadata":
-            val = data.pop(key)
-            if key == "taskable" and "jobable" not in meta:
-                meta["jobable"] = val
-            elif key not in meta:
-                meta[key] = val
-    data["metadata"] = meta
-    if not str(data.get("name") or "").strip():
-        data["name"] = name
-    data["allowed-tools"] = _coerce_allowed_tools(data.get("allowed-tools"), mode=mode)
-    meta["lifecycle"] = coerce_lifecycle(meta.get("lifecycle"), allow_auto=True)
-    if meta.get("lifecycle") == "auto":
-        meta["lifecycle"] = "short"
-
-    if meta.get("jobable") is True:
-        meta["jobable"] = "true"
-    elif meta.get("jobable") is False:
-        meta["jobable"] = "false"
-    elif "jobable" not in meta:
-        meta["jobable"] = "true"
-
-    if meta.get("category") is not None and str(meta.get("category") or "").strip():
-        slug = normalize_category(meta["category"])
-        if slug:
-            meta["category"] = slug
-
-    compat = data.get("compatibility")
-    if isinstance(compat, str):
-        data["compatibility"] = truncate_compat(compat, limit=MAX_COMPATIBILITY_LEN)
-    return dump_skill_md(data, body)
+def draft_binary(skill_md: str) -> str:
+    """Catalog CLI declared on a draft, before shaping strips Peon metadata."""
+    resolution = resolve_intent(skill_md=skill_md, suggested_tools=[], prompt="")
+    if resolution.mode != "catalog_wrapper":
+        return ""
+    return resolution.primary_binary
 
 
 def lint_draft(
     skill_md: str, files: dict[str, str], *, mode: str = "catalog_wrapper"
 ) -> dict[str, Any]:
-    issues = list(SkillLinter.lint_text(skill_md, skill_dir=None))
-    known = set(files)
-    for ref in extract_file_refs(skill_md):
-        if ref not in known:
-            issues.append(
-                LintIssue("error", "broken_ref", f"File reference `{ref}` not found.")
-            )
-    run_body = str(files.get(RUN_PY) or "").strip()
-    if mode == "catalog_wrapper" and not run_body:
-        issues.append(
-            LintIssue(
-                "error",
-                "missing_run_script",
-                "Missing required file: scripts/run.py "
-                "(catalog CLI skills use run_skill_script → scripts/run.py).",
-            )
-        )
+    """Create-time gate: the pack must validate as a Claude Agent Skill."""
+    del mode
     parsed = parse_frontmatter_yaml(skill_md)
-    at = str((parsed[0] if parsed else {}).get("allowed-tools") or "").lower()
-    if mode == "capability" and "run_cli" not in at and "run_code" not in at:
-        issues.append(
-            LintIssue(
-                "warning",
-                "capability_tools_missing",
-                "Capability skill should allow run_cli and/or run_code.",
-            )
-        )
-    elif (
-        mode == "catalog_wrapper"
-        and "run_skill_script" in skill_md
-        and run_body
-        and RUN_PY not in skill_md
-    ):
-        issues.append(
-            LintIssue(
-                "warning",
-                "run_script_undocumented",
-                "scripts/run.py exists but SKILL.md does not mention it.",
-            )
-        )
-    declared = _clis_from_frontmatter(parsed[0]) if parsed else []
-    missing_registry = [
-        c for c in declared if ToolCatalog.shared().lookup(c) is None
-    ]
-    if missing_registry:
-        guide = str(files.get(INSTALL_GUIDE) or "")
-        if not has_install_fence(guide):
-            issues.append(
-                LintIssue(
-                    "error",
-                    "missing_install_guide",
-                    f"CLI(s) {missing_registry} not in tools/catalog — add "
-                    f"{INSTALL_GUIDE} with an ```yaml install: …``` fence "
-                    "(InstallResolver step #2).",
-                )
-            )
-        elif INSTALL_GUIDE not in skill_md and "INSTALL.md" not in skill_md:
-            issues.append(
-                LintIssue(
-                    "warning",
-                    "install_guide_undocumented",
-                    f"{INSTALL_GUIDE} exists but SKILL.md does not link it.",
-                )
-            )
-    return {
-        "compatible": not any(i.level == "error" for i in issues),
-        "errors": [i.to_dict() for i in issues if i.level == "error"],
-        "warnings": [i.to_dict() for i in issues if i.level == "warning"],
-    }
-
-
-def run_binary_wrapper(binary: str) -> str:
-    cli = (binary or "tool").strip() or "tool"
-    return (
-        "#!/usr/bin/env python3\n"
-        "from skill_entry import main, run_binary\n\n\n"
-        "def _run() -> int:\n"
-        "    return run_binary(\n"
-        f'        "{cli}",\n'
-        f'        default_for_target=lambda t: f"{cli} {{t}}",\n'
-        "    )\n\n\n"
-        'if __name__ == "__main__":\n'
-        "    main(_run)\n"
-    )
-
-
-def _ensure_run_section(
-    skill_md: str, *, name: str, mode: str, provision_clis: list[str] | None = None
-) -> str:
-    if mode == "capability":
-        if "run_cli" in skill_md or "run_code" in skill_md:
-            return skill_md
-        exec_caps = [
-            c
-            for c in default_allowed_tools(mode="capability").split()
-            if c in {"provision_cli", "run_cli", "run_code"}
-        ]
-        lines = "\n".join(f'{c}("…")' for c in exec_caps) or 'run_cli("…")'
-        return (
-            f"{skill_md.rstrip()}\n\n## Run\n"
-            "No matching `tools/catalog` CLI — use agent sandbox tools:\n"
-            f"```\nsandbox_setup()\n{lines}\n```\n"
-        )
-
-    clis = [c for c in (provision_clis or []) if c]
-    if RUN_PY in skill_md and "run_skill_script" in skill_md:
-        if clis and "provision_cli" not in skill_md:
-            prov = "\n".join(f'provision_cli("{c}")' for c in clis)
-            return (
-                f"{skill_md.rstrip()}\n\n## Provision\n"
-                "Call before first use when the CLI is not yet on PATH "
-                f"(catalog → `{INSTALL_GUIDE}` → LLM):\n"
-                f"```\n{prov}\n```\n"
-            )
-        return skill_md
-
-    run_lines = ["sandbox_setup()"]
-    if clis:
-        run_lines.extend(f'provision_cli("{c}")' for c in clis)
-    run_lines.append(
-        f'run_skill_script("{name}", "scripts/run.py", command="<cli args>")'
-    )
-    parts = [
-        skill_md.rstrip(),
-        "",
-        "## Scripts",
-        "- scripts/run.py — entry via run_binary",
-    ]
-    if clis:
-        parts.extend(
-            [
-                "",
-                "## Install",
-                f"See [{INSTALL_GUIDE}]({INSTALL_GUIDE}) when the CLI is not in "
-                "`tools/catalog`.",
-            ]
-        )
-    parts.extend(["", "## Run", "```", *run_lines, "```", ""])
-    return "\n".join(parts)
+    name = str((parsed[0] if parsed else {}).get("name") or "").strip().lower()
+    return lint_claude_files(name, skill_md, files)
 
 
 def _ensure_install_guide(
@@ -472,9 +442,8 @@ def _ensure_install_guide(
     if INSTALL_GUIDE not in skill_md and "INSTALL.md" not in skill_md:
         skill_md = (
             f"{skill_md.rstrip()}\n\n## Install\n\n"
-            f"When the required CLI is not in `tools/catalog`, see "
-            f"[{INSTALL_GUIDE}]({INSTALL_GUIDE}) "
-            f"(used by `provision_cli` / InstallResolver).\n"
+            "If the required CLI is not on PATH, follow "
+            f"[{INSTALL_GUIDE}]({INSTALL_GUIDE}).\n"
         )
     return skill_md, out
 
@@ -489,10 +458,9 @@ def ensure_skill_entry(
     proposed: list[dict[str, str]] | None = None,
     install_recipes: list[dict[str, Any]] | None = None,
 ) -> tuple[str, dict[str, str], str]:
-    """Catalog / proposed CLI → ``run_binary`` wrapper + optional INSTALL.md.
+    """Catalog CLI → portable ``scripts/run.sh``. Instructions-only when no CLI.
 
-    ``install_recipes`` (tools-suggestor YAML) become ``references/INSTALL.md``
-    for InstallResolver step #2 when the CLI is not in ``tools/catalog``.
+    Off-catalog recipes still land in ``references/INSTALL.md`` as plain steps.
     """
     out = dict(files)
     recipes = list(install_recipes or [])
@@ -503,45 +471,12 @@ def ensure_skill_entry(
         proposed=proposed,
     )
     mode = resolution.mode
-    run_src = str(out.get(RUN_PY) or "").strip()
-    matched_bins = {m["binary"].lower() for m in resolution.matched} | {
-        m["id"].lower() for m in resolution.matched
-    }
-    proposed_ids = {
-        str(p.get("id") or p.get("binary") or "").strip().lower()
-        for p in (proposed or [])
-        if str(p.get("id") or p.get("binary") or "").strip()
-    }
-
-    if mode == "catalog_wrapper":
-        wrapped = _RUN_BINARY_RE.search(run_src)
-        wrong = bool(wrapped and wrapped.group(1).strip().lower() not in matched_bins)
-        if not run_src or wrong:
-            out[RUN_PY] = run_binary_wrapper(resolution.primary_binary)
-    elif run_src:
-        wrapped = _RUN_BINARY_RE.search(run_src)
-        if wrapped:
-            bin_name = wrapped.group(1).strip().lower()
-            if (
-                bin_name
-                and ToolCatalog.shared().lookup(bin_name) is None
-                and bin_name not in proposed_ids
-            ):
-                out.pop(RUN_PY, None)
-
+    binary = resolution.primary_binary if mode == "catalog_wrapper" else ""
     if recipes:
         skill_md, out = _ensure_install_guide(out, skill_md, recipes=recipes)
-
-    off_catalog = [
-        m["binary"] or m["id"]
-        for m in resolution.matched
-        if ToolCatalog.shared().lookup(m["id"]) is None
-        and ToolCatalog.shared().lookup(m["binary"]) is None
-    ]
-    skill_md = normalize_skill_md(skill_md, name=name, mode=mode)
-    skill_md = _ensure_run_section(
-        skill_md, name=name, mode=mode, provision_clis=off_catalog or list(proposed_ids)
-    )
+    out = shape_files(out, binary=binary)
+    entry = SCRIPT_SH if SCRIPT_SH in out else ""
+    skill_md = shape_skill_md(skill_md, name=name, binary=binary, entry=entry)
     return skill_md, out, mode
 
 
@@ -551,16 +486,8 @@ def parse_skill_payload(
     name = str(payload.get("name") or "").strip().lower()
     skill_md = str(payload.get("skill_md") or "").strip()
     files_raw = payload.get("files") or {}
-    files = (
-        {str(k): str(v) for k, v in files_raw.items()}
-        if isinstance(files_raw, dict)
-        else {}
-    )
-    suggested = [
-        str(t).strip()
-        for t in (payload.get("suggested_tools") or [])
-        if str(t).strip()
-    ]
+    files = {str(k): str(v) for k, v in files_raw.items()} if isinstance(files_raw, dict) else {}
+    suggested = [str(t).strip() for t in (payload.get("suggested_tools") or []) if str(t).strip()]
     if not valid_skill_name(name):
         raise RuntimeError(f"invalid skill name {name!r}")
     if not skill_md:
@@ -587,36 +514,34 @@ def authoring_prompt(
     install_types = ", ".join(CATALOG_INSTALL_TYPES)
     lines = [
         f"Operator request:\n{prompt}\n",
-        f"Catalog tools matched on disk:\n"
-        f"{yaml.safe_dump(on_disk or ['(none)'], sort_keys=False)}",
+        f"Catalog tools matched on disk:\n{yaml.safe_dump(on_disk or ['(none)'], sort_keys=False)}",
         f"Authoring mode: {mode}",
-        f"Default allowed-tools:\n  {default_allowed_tools(mode=mode)}",
+        "Default allowed-tools: Bash Read",
+        "Write a Claude Agent Skill. It must pass skills-ref.",
+        "The script stays a shebang that execs the CLI. The Run section calls "
+        'run_skill_script("<name>", "scripts/run.sh", args=\'["<args>"]\').',
+        "Do not use skill_entry or run_binary. Do not document a bare bash invocation.",
     ]
     if tool_recipes:
         lines.append(
             "CLI is NOT in tools/catalog yet. Host drafted install recipe(s) via "
             f"tools-suggestor (types: {install_types}).\n"
-            "Author as catalog_wrapper:\n"
-            f"- metadata.requires_clis / suggested_tools = recipe id(s)\n"
-            "- files[\"scripts/run.py\"] with skill_entry.run_binary\n"
-            f"- REQUIRED files[\"{INSTALL_GUIDE}\"] with a single ```yaml fence "
-            "starting with `install:` (same steps as the recipe). "
-            "InstallResolver uses this as step #2 when catalog misses.\n"
-            "- Do NOT put apt/git/pip/custom install steps in SKILL.md body — "
-            f"only link {INSTALL_GUIDE}.\n"
-            f"- Document: sandbox_setup() → provision_cli(\"<id>\") → "
-            "run_skill_script(...)\n"
+            f'- files["{SCRIPT_SH}"] is a bash script: `exec <binary> "$@"`\n'
+            "- The Run section calls run_skill_script, not bash.\n"
+            f'- REQUIRED files["{INSTALL_GUIDE}"] with a ```yaml fence '
+            "starting with `install:` (same steps as the recipe).\n"
+            f"- Link {INSTALL_GUIDE} from SKILL.md. Do not put apt/git/pip steps in the body.\n"
             f"{yaml.safe_dump(tool_recipes, sort_keys=False)}"
         )
     elif mode == "catalog_wrapper":
         lines.append(
-            "CLI is in tools/catalog. Emit run_binary wrapper; do not add "
-            f"{INSTALL_GUIDE} (provision comes from the registry)."
+            f"CLI is in tools/catalog. Emit {SCRIPT_SH} that execs that binary. "
+            f"Do not add {INSTALL_GUIDE}."
         )
     else:
         lines.append(
-            "No CLI required. Capability mode: run_cli / run_code / provision_cli "
-            "only. Do not invent run_binary for unknown CLIs."
+            "No CLI required. Write instructions and, if needed, a normal script "
+            "with a shebang. Do not invent a wrapper for an unknown binary."
         )
     lines.append(f"Available catalog tools:\n{yaml.safe_dump(catalog, sort_keys=False)}")
     return "\n".join(lines)

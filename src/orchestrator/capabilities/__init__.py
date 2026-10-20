@@ -1,7 +1,4 @@
-"""Capability registry — LangChain tools bound per Job.
-
-Naming: ``provision_*`` (never ensure_*), ``run_skill_script``.
-"""
+"""Capability registry — named callables for authoring and command helpers."""
 
 from orchestrator.capabilities.registry import (
     REGISTRY,
@@ -9,7 +6,6 @@ from orchestrator.capabilities.registry import (
     capability,
     default_allowed_tools,
     ensure_registered,
-    get_tools_for_names,
 )
 
 __all__ = [
@@ -18,5 +14,4 @@ __all__ = [
     "capability",
     "default_allowed_tools",
     "ensure_registered",
-    "get_tools_for_names",
 ]

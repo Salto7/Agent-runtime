@@ -1,6 +1,6 @@
-"""Safe zip extraction, shared by skill/MCP/marketplace installers. Rejects
-path traversal (``..``, absolute paths); callers decide where the
-extracted tree lives and how long it persists.
+"""Safe zip extraction, shared by the skill drag-drop installer and the
+marketplace scanner. Rejects path traversal (``..``, absolute paths);
+callers decide where the extracted tree lives and how long it persists.
 """
 
 from __future__ import annotations

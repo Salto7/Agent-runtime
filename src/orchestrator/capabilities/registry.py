@@ -1,10 +1,11 @@
-"""Register LangChain tools by name for ``allowed-tools`` filtering.
+"""Register capability callables by name for ``allowed-tools`` filtering.
 
 Called capabilities (not “tools”) to avoid confusion with ``tools/catalog``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Iterable
@@ -14,15 +15,13 @@ _REGISTERED = False
 
 class CapabilityGroup(str, Enum):
     SANDBOX = "sandbox"
-    SKILLS = "skills"
     ENGAGEMENT = "engagement"
-    CORE = "core"
 
 
 @dataclass(frozen=True)
 class RegisteredCapability:
     group: CapabilityGroup
-    tool: Any
+    handler: Callable[..., Any]
     tags: frozenset[str] = field(default_factory=frozenset)
 
 
@@ -33,30 +32,25 @@ class CapabilityRegistry:
     def register(
         self,
         group: CapabilityGroup,
-        tool: Any,
+        handler: Callable[..., Any],
         *,
         tags: Iterable[str] = (),
-    ) -> Any:
-        name = str(getattr(tool, "name", "") or "").strip()
-        if not name:
-            raise ValueError("Capability tool must have a name")
-        if name in self._by_name:
-            raise ValueError(f"Duplicate capability registration: {name!r}")
-        self._by_name[name] = RegisteredCapability(
+        name: str = "",
+    ) -> Callable[..., Any]:
+        key = (name or getattr(handler, "__name__", "") or "").strip()
+        if not key:
+            raise ValueError("Capability must have a name")
+        if key in self._by_name:
+            raise ValueError(f"Duplicate capability registration: {key!r}")
+        self._by_name[key] = RegisteredCapability(
             group=group,
-            tool=tool,
+            handler=handler,
             tags=frozenset(str(t).strip() for t in tags if str(t).strip()),
         )
-        return tool
+        return handler
 
     def get(self, name: str) -> RegisteredCapability | None:
         return self._by_name.get(name)
-
-    def tool_map(self) -> dict[str, Any]:
-        return {name: e.tool for name, e in self._by_name.items()}
-
-    def all_tools(self) -> list[Any]:
-        return [e.tool for e in self._by_name.values()]
 
     def names(
         self,
@@ -88,27 +82,31 @@ REGISTRY = CapabilityRegistry()
 
 _GROUP_ORDER = (
     CapabilityGroup.SANDBOX,
-    CapabilityGroup.SKILLS,
     CapabilityGroup.ENGAGEMENT,
 )
 _SKIP_AUTHORING_TAGS = frozenset({"watchdog", "periodic", "subagent"})
-# catalog_wrapper: sandbox status/setup + provision_cli (catalog → skill INSTALL → LLM).
-# Exec still goes through run_skill_script, not free-form run_cli/run_code.
-_CATALOG_SANDBOX = frozenset({"sandbox_setup", "sandbox_status", "provision_cli"})
+# catalog_wrapper: sandbox status + provision_cli only.
+_CATALOG_SANDBOX = frozenset({"sandbox_status", "provision_cli"})
 
 
 def ensure_registered() -> CapabilityRegistry:
     """Import capability tools once so ``@capability`` side-effects populate REGISTRY."""
     global _REGISTERED
     if not _REGISTERED:
-        import orchestrator.tools.llm_tools  # noqa: F401
+        # circular: capabilities.tools → CapabilityGroup / capability from this module
+        import orchestrator.capabilities.tools  # noqa: F401
 
         _REGISTERED = True
     return REGISTRY
 
 
 def default_allowed_tools(*, mode: str = "catalog_wrapper") -> str:
-    """``allowed-tools`` string from the live registry for skill authoring."""
+    """``allowed-tools`` string from the live registry for role authoring.
+
+    - ``catalog_wrapper``: sandbox status/provision + engagement;
+      skip watchdog/periodic/subagent tags.
+    - ``capability``: same as catalog_wrapper plus the Claude ``bash`` shell.
+    """
     reg = ensure_registered()
     names: list[str] = []
     for group in _GROUP_ORDER:
@@ -116,28 +114,18 @@ def default_allowed_tools(*, mode: str = "catalog_wrapper") -> str:
             entry = reg.get(name)
             if entry is None:
                 continue
-            if (
-                mode == "catalog_wrapper"
-                and entry.group == CapabilityGroup.SANDBOX
-                and name not in _CATALOG_SANDBOX
-            ):
+            if entry.group == CapabilityGroup.SANDBOX:
+                if name in _CATALOG_SANDBOX or mode == "capability" and "shell" in entry.tags:
+                    names.append(name)
                 continue
             names.append(name)
     return " ".join(names)
 
 
 def capability(group: CapabilityGroup, *, tags: Iterable[str] = ()):
-    """Register a LangChain ``@tool`` under ``group``."""
+    """Register a plain capability callable under ``group``."""
 
-    def decorator(tool: Any) -> Any:
-        return REGISTRY.register(group, tool, tags=tags)
+    def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        return REGISTRY.register(group, fn, tags=tags)
 
     return decorator
-
-
-def get_tools_for_names(names: set[str] | frozenset[str] | None) -> list[Any]:
-    ensure_registered()
-    if names is None:
-        return REGISTRY.all_tools()
-    tools = REGISTRY.tool_map()
-    return [tools[n] for n in names if n in tools]

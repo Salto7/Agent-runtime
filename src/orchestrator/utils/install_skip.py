@@ -91,6 +91,9 @@ def copytree_ignore(*, skip_hidden: bool = False):
         base = Path(directory)
         for name in names:
             child = base / name
+            if child.is_symlink():   # a link in a pack could point at host files (~/.ssh…): never copy or read it
+                skipped.add(name)
+                continue
             if child.is_dir() or name in JUNK_DIR_NAMES:
                 if skip_dir_name(name, skip_hidden=skip_hidden):
                     skipped.add(name)

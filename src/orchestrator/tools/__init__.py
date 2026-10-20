@@ -1,15 +1,15 @@
-"""Orchestrator tools helpers (catalog + LLM capability tools)."""
+"""CLI tool catalog + install resolver.
 
-from orchestrator.capabilities import ensure_registered
-from orchestrator.tools.catalog import CatalogTool, ProvisionResult, ToolCatalog
+Shared capability tool defs live in ``orchestrator.capabilities.tools``.
+CrewAI role tools live in ``orchestrator.crew.tools``.
+"""
 
-# Back-compat alias used by older call sites / thin client.
-ensure_tools_registered = ensure_registered
+from orchestrator.tools.catalog import CatalogProvisioner, CatalogTool, ToolCatalog
+from orchestrator.tools.install import InstallResolver
 
 __all__ = [
     "CatalogTool",
-    "ProvisionResult",
+    "CatalogProvisioner",
+    "InstallResolver",
     "ToolCatalog",
-    "ensure_registered",
-    "ensure_tools_registered",
 ]

@@ -2,25 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Self
+from agent_runtime.util import SharedBase
 
 
-class SharedService:
-    """Process-wide singleton helper.
+class SharedServiceBase(SharedBase):
+    """Process-wide singleton helper (Django/orchestrator services).
 
     Prefer public **classmethods** that call ``cls.shared()`` internally
-    (e.g. ``SandboxSession.current()``). Use ``Cls()`` + ``reset_shared()``
+    (e.g. ``Session.current()``). Use ``Cls()`` + ``reset_shared()``
     for tests/DI; avoid module-level pass-through wrappers.
+
+    Implementation lives in ``agent_runtime.util.SharedBase`` so runtime CLIs
+    and orchestrator services share one singleton store.
     """
-
-    _shared: ClassVar[dict[type, Any]] = {}
-
-    @classmethod
-    def shared(cls) -> Self:
-        if cls not in cls._shared:
-            cls._shared[cls] = cls()
-        return cls._shared[cls]
-
-    @classmethod
-    def reset_shared(cls) -> None:
-        cls._shared.pop(cls, None)

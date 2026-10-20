@@ -1,9 +1,7 @@
 """Parse MCP server documents. No database and no process starts.
 
-Accepts one server object or an ``mcpServers`` map. A host's ``McpStore``
-(see ``orchestrator.mcp.store``) should run this before every create or
-replace — the parser is what rejects a bad document, the store is just
-persistence.
+Accepts one server object or an ``mcpServers`` map. ``upsert`` in
+``PlatformCatalog`` runs this before every create or replace.
 """
 
 from __future__ import annotations
@@ -13,7 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+from orchestrator.skills.common import SKILL_NAME_RE
 
 _SECRET_KEYS = frozenset(
     {
@@ -224,7 +222,8 @@ def _reference_hosts(raw: Any) -> tuple[str, ...]:
     hosts = []
     for h in raw:
         host = h.strip().lower().rstrip(".")
-        if not host or "/" in host or " " in host or len(host) > 253:
+        if (not host or "/" in host or " " in host or len(host) > 253 or "." not in host
+                or all(part.isdigit() for part in host.split("."))):   # a bare TLD or an IP would exempt real targets
             raise McpParseError(f"invalid reference host {h!r}")
         hosts.append(host)
     return tuple(dict.fromkeys(hosts))

@@ -1,6 +1,15 @@
-"""Authoring: tool catalog suggestions + skill scaffolding (+ learn-lab tests)."""
+"""Learn / authoring helpers (tool catalog suggestions + skill scaffolding)."""
 
-from orchestrator.learn.authoring import LearnAuthoring, skills_root
-from orchestrator.learn.lab import LearnLab
+from __future__ import annotations
 
-__all__ = ["LearnAuthoring", "LearnLab", "skills_root"]
+from typing import Any
+
+__all__ = ["LearnAuthoring"]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "LearnAuthoring":
+        from orchestrator.learn.authoring import LearnAuthoring
+
+        return LearnAuthoring
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

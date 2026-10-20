@@ -1,0 +1,189 @@
+# Full stack for the orchestrator library (same pieces as Peon, minus the web app):
+#
+#   cp .env.example .env                                  # set OPENROUTER_API_KEY, COGNEE_ENABLED=true
+#   docker compose --profile build build sandbox          # sandbox image (orchestrator-sandbox:local)
+#   docker compose up -d --build                          # redis + cognee + worker + scheduler
+#   ORCHESTRATOR_EXECUTOR=dramatiq REDIS_URL=redis://localhost:6379/0 \
+#       orchestrator run "..." --project                   # submit from the host; workers execute
+#   docker compose --profile llm-proxy up -d litellm      # optional OpenAI-compatible LiteLLM proxy
+#
+# Services:  redis (Dramatiq broker + shared run state / A2A) · worker (Dramatiq consumers; creates the
+# per-project sandboxes via docker.sock) · scheduler (periodic dream cycles) · cognee (memory sidecar,
+# http://cognee:8001) · litellm (optional proxy) · sandbox (image build target).
+name: orchestrator
+
+services:
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - orchestrator_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Dramatiq consumers. One job = one agent turn in its project sandbox (started through docker.sock).
+  worker: &worker
+    image: orchestrator-worker:local
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment: &worker_env
+      REDIS_URL: redis://redis:6379/0
+      ORCHESTRATOR_EXECUTOR: dramatiq
+      ORCHESTRATOR_CONFIG_ROOT: /app
+      PROJECT_WORKSPACES_DIR: /workspaces
+      # live skill events: the worker listens on this socket; the volume is mounted into every sandbox at the same path
+      ORCHESTRATOR_STREAM_SOCKET: /tmp/orchestrator/stream.sock
+      SANDBOX_SOCKETS_VOLUME: orchestrator_sockets
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-orchestrator-sandbox:local}
+      SANDBOX_PREFIX: ${SANDBOX_PREFIX:-orchestrator-project}
+      # LLM passthrough (works with or without a project .env)
+      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+      LITELLM_MODEL: ${LITELLM_MODEL:-openrouter/openai/gpt-5.6-luna}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+      LITELLM_API_BASE: ${LITELLM_API_BASE:-}
+      COGNEE_URL: http://cognee:${COGNEE_PORT:-8001}
+      COGNEE_ENABLED: ${COGNEE_ENABLED:-true}
+      DRAMATIQ_MAX_THREADS: ${DRAMATIQ_MAX_THREADS:-4}
+      JOB_HEARTBEAT_S: ${JOB_HEARTBEAT_S:-10}
+      JOB_STALE_S: ${JOB_STALE_S:-90}
+      JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-2}
+      SANDBOX_CHOWN: ${SANDBOX_CHOWN:-true}
+      SANDBOX_HOST_UID: ${SANDBOX_HOST_UID:-}   # set to your host uid/gid so sandbox files stay yours
+      SANDBOX_HOST_GID: ${SANDBOX_HOST_GID:-}
+      JOB_REAP_S: ${JOB_REAP_S:-30}
+      PEON_DREAMING_ENABLED: ${PEON_DREAMING_ENABLED:-true}
+      PEON_DREAMING_INTERVAL_S: ${PEON_DREAMING_INTERVAL_S:-900}
+    volumes: &worker_volumes
+      # Bind mounts (not named volumes): the host CLI and the workers see the same workspaces/catalogs,
+      # and sandbox bind paths resolve to real host paths.
+      - ${WORKSPACES_DIR:-./workspaces}:/workspaces
+      - orchestrator_sockets:/tmp/orchestrator
+      - ./skills:/app/skills
+      - ./tools:/app/tools
+      - ./mcps:/app/mcps
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+      cognee:
+        condition: service_started
+    command: ["worker"]
+
+  # Periodic dreaming: enqueues a dream_cycle every PEON_DREAMING_INTERVAL_S seconds.
+  scheduler:
+    <<: *worker
+    command: ["scheduler"]
+    volumes:
+      - ${WORKSPACES_DIR:-./workspaces}:/workspaces
+      - ./skills:/app/skills
+      - ./tools:/app/tools
+
+  # Self-hosted Cognee memory sidecar (single writer).
+  # Chat LLM = LITELLM_MODEL via OpenRouter; embeddings are separate (required by cognify).
+  cognee:
+    image: ${COGNEE_IMAGE:-cognee/cognee:main}
+    restart: unless-stopped
+    environment:
+      HTTP_PORT: ${COGNEE_PORT:-8001}
+      ENABLE_BACKEND_ACCESS_CONTROL: "false"
+      COGNEE_SKIP_CONNECTION_TEST: ${COGNEE_SKIP_CONNECTION_TEST:-true}
+      LLM_PROVIDER: custom
+      LLM_MODEL: ${LITELLM_MODEL:-openrouter/openai/gpt-5.6-luna}
+      LLM_API_KEY: ${OPENROUTER_API_KEY:-}
+      EMBEDDING_PROVIDER: custom
+      EMBEDDING_MODEL: ${COGNEE_EMBEDDING_MODEL:-openrouter/openai/text-embedding-3-small}
+      EMBEDDING_API_KEY: ${OPENROUTER_API_KEY:-}
+      EMBEDDING_DIMENSIONS: ${COGNEE_EMBEDDING_DIMENSIONS:-1536}
+    volumes:
+      - orchestrator_cognee:/cognee-storage
+    expose:
+      - "${COGNEE_PORT:-8001}"
+    ports:
+      - "${COGNEE_PORT:-8001}:${COGNEE_PORT:-8001}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${HTTP_PORT}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    networks:
+      default:
+        aliases:
+          - cognee
+
+  # Optional OpenAI-compatible LiteLLM proxy (OpenCode / Learn lab). Off by default.
+  # Library-managed alternative: LLM_PROXY_ENABLED=true (LlmProxy starts a container).
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    profiles: ["llm-proxy"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LITELLM_MODEL: ${LITELLM_MODEL:-openrouter/openai/gpt-5.6-luna}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-orchestrator-litellm}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        MODEL="$${LITELLM_MODEL:?LITELLM_MODEL required}"
+        cat >/tmp/config.yaml <<EOF
+        model_list:
+          - model_name: default
+            litellm_params:
+              model: os.environ/LITELLM_MODEL
+              api_key: os.environ/OPENROUTER_API_KEY
+          - model_name: "$${MODEL}"
+            litellm_params:
+              model: os.environ/LITELLM_MODEL
+              api_key: os.environ/OPENROUTER_API_KEY
+          - model_name: openrouter/openai/text-embedding-3-small
+            litellm_params:
+              model: openrouter/openai/text-embedding-3-small
+              api_key: os.environ/OPENROUTER_API_KEY
+        general_settings:
+          master_key: os.environ/LITELLM_MASTER_KEY
+        EOF
+        exec litellm --config /tmp/config.yaml --host 0.0.0.0 --port 4000
+    ports:
+      - "${LLM_PROXY_PORT:-4000}:4000"
+    networks:
+      default:
+        aliases:
+          - litellm
+    restart: unless-stopped
+
+  # Sandbox image build target: `docker compose --profile build build sandbox`.
+  sandbox:
+    image: ${SANDBOX_IMAGE:-orchestrator-sandbox:local}
+    profiles: ["build"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: ["true"]
+
+volumes:
+  orchestrator_sockets:
+    name: orchestrator_sockets
+  orchestrator_cognee:
+    name: orchestrator_cognee
+  orchestrator_redis:
+    name: orchestrator_redis

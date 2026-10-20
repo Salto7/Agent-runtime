@@ -1,42 +1,34 @@
-"""Skills: provision / load / execute."""
+"""Skills: SKILL.md packs."""
 
-from orchestrator.skills.execute import (
-    LocalSkillExecutor,
-    NullSkillExecutor,
-    SkillExecutionDispatcher,
-    SkillExecutor,
-    SkillRunRequest,
-    SkillRunResult,
+from __future__ import annotations
+
+from typing import Any
+
+from orchestrator.skills.manifest import (
+    ParseProfile,
+    SkillManifest,
+    SkillParseError,
+    tokenize_allowed_tools,
 )
-from orchestrator.skills.load import (
-    FilesystemSkillLoader,
-    SkillActivation,
-    SkillCatalogEntry,
-    SkillLoader,
-)
-from orchestrator.skills.misc.parser import SkillParser
-from orchestrator.skills.misc.registry import SkillRegistry
-from orchestrator.skills.misc.router import SkillRouter
-from orchestrator.skills.misc.skill import Skill
-from orchestrator.skills.misc.tags import TagNormalizer
-from orchestrator.skills.provision import SkillLinter, SkillProvisioner
+from orchestrator.skills.model import SkillSpec, parse_skill_md
+from orchestrator.skills.registry import SkillRegistry
 
 __all__ = [
-    "FilesystemSkillLoader",
-    "LocalSkillExecutor",
-    "NullSkillExecutor",
-    "Skill",
-    "SkillActivation",
-    "SkillCatalogEntry",
-    "SkillExecutionDispatcher",
-    "SkillExecutor",
-    "SkillLinter",
-    "SkillLoader",
-    "SkillParser",
-    "SkillProvisioner",
+    "ParseProfile",
+    "SkillManifest",
+    "SkillParseError",
     "SkillRegistry",
-    "SkillRouter",
-    "SkillRunRequest",
-    "SkillRunResult",
-    "TagNormalizer",
+    "SkillSpec",
+    "parse_skill_md",
+    "role_skills_prompt_block",
+    "tokenize_allowed_tools",
+    "upsert_role_skills",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"role_skills_prompt_block", "upsert_role_skills"}:
+        from orchestrator.skills import role_memory
+
+        return getattr(role_memory, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

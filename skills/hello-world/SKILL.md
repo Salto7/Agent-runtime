@@ -1,7 +1,7 @@
 ---
 name: hello-world
 description: Write a greeting file in the workspace and print it.
-allowed-tools: sandbox_setup run_cli run_code run_skill_script skills_list skill_view
+allowed-tools: bash Read
 metadata:
   category: examples
   tags: [demo, workspace]
@@ -11,7 +11,7 @@ metadata:
 
 # Hello World
 
-Use `run_skill_script` with `scripts/run.py` (preferred), or `run_cli` / `run_code`.
+Run `python3 /skills/hello-world/scripts/run.py` (or write the file with `bash`).
 
 When invoked:
 1. Write `/workspace/hello.txt` containing a short greeting and the current UTC time.

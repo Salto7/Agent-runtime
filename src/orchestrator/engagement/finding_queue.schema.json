@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "peon://schemas/finding_queue.schema.json",
+  "title": "Peon findings queue row",
+  "description": "NDJSON line shape for workspace/findings_queue.jsonl. MCP servers may append rows when PEON_FINDINGS_QUEUE is set.",
+  "type": "object",
+  "required": ["title"],
+  "additionalProperties": true,
+  "properties": {
+    "title": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "kind": { "type": "string" },
+    "severity": { "type": "string" },
+    "host": { "type": "string" },
+    "port": { "type": ["integer", "string", "null"] },
+    "protocol": { "type": "string" },
+    "description": { "type": "string" },
+    "summary": { "type": "string" },
+    "evidence": { "type": "string" },
+    "evidence_path": { "type": "string" },
+    "remediation": { "type": "string" },
+    "subjects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "value"],
+        "properties": {
+          "type": { "type": "string" },
+          "value": { "type": "string" },
+          "relation": { "type": "string" }
+        }
+      }
+    },
+    "metadata": { "type": "object" },
+    "recorded_at": { "type": "string" }
+  }
+}

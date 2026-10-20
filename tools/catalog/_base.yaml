@@ -1,0 +1,19 @@
+id: _base
+name: Base runtime
+description: >
+  Shell, Python, and common utilities baked into the sandbox image.
+  Not provisioned per job (tier image).
+tier: image
+binary: ""
+# Install recipes (other tools) — priority: custom → apt → github_release → pip/git_clone
+#   install:
+#     - type: custom
+#       command: "curl -fsSL … | bash"   # inline shell
+#     # or command: dnsx.sh              # tools/catalog/dnsx.sh (same stem as dnsx.yaml)
+#     - type: apt
+#       packages: [fallback]
+#     - type: github_release
+#       repo: org/tool
+install: []
+verify: []
+tags: [base]

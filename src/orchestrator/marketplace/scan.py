@@ -89,7 +89,8 @@ def scan_skills(root: Path) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for pack_dir in _iter_dirs(base):
         manifest = next(
-            (pack_dir / name for name in _SKILL_MANIFEST_NAMES if (pack_dir / name).is_file()),
+            (pack_dir / name for name in _SKILL_MANIFEST_NAMES
+             if (pack_dir / name).is_file() and not (pack_dir / name).is_symlink()),
             None,
         )
         if manifest is None:
@@ -113,7 +114,9 @@ def scan_skills(root: Path) -> list[dict[str, Any]]:
 def _iter_agent_files(root: Path) -> list[Path]:
     found: list[Path] = []
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in _AGENT_EXTS:
+        if path.is_symlink() or not path.is_file() or path.suffix.lower() not in _AGENT_EXTS:
+            continue   # a fetched repo must not make us read host files through a link
+        if any(_is_skipped_dir(p) for p in path.relative_to(root).parts[:-1]):
             continue
         if "agents" not in {p.lower() for p in path.parent.parts}:
             continue
@@ -165,7 +168,9 @@ def scan_mcp_pointers(root: Path) -> list[dict[str, Any]]:
     """
     out: list[dict[str, Any]] = []
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.name.lower() not in _MCP_MANIFEST_NAMES:
+        if path.is_symlink() or not path.is_file() or path.name.lower() not in _MCP_MANIFEST_NAMES:
+            continue
+        if any(_is_skipped_dir(p) for p in path.relative_to(root).parts[:-1]):
             continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))

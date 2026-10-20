@@ -1,0 +1,31 @@
+# Orchestrator worker image: Dramatiq consumers + dream scheduler. Starts project sandboxes through
+# the host's docker.sock (mounted by docker-compose.yml), so it carries the docker CLI.
+#
+#   docker compose build worker
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    ORCHESTRATOR_CONFIG_ROOT=/app \
+    PROJECT_WORKSPACES_DIR=/workspaces
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates git \
+    && curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.1.1.tgz \
+       | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY src/ src/
+RUN pip install --no-cache-dir .
+
+# Catalogs (mounted over these in docker-compose.yml so edits apply without a rebuild).
+COPY skills/ skills/
+COPY tools/ tools/
+RUN mkdir -p /workspaces/platform /app/mcps
+
+COPY docker/entrypoint-worker.sh /entrypoint-worker.sh
+RUN chmod +x /entrypoint-worker.sh
+
+ENTRYPOINT ["/entrypoint-worker.sh"]
+CMD ["worker"]

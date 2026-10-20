@@ -1,9 +1,8 @@
-"""Skill-side stream + optional tool RPC (Unix sockets).
+"""Skill-side stream (Unix socket).
 
 Lives under ``skills/helpers/``. No peon/orchestrator imports — skills stay
 runnable outside the control plane. Stream is a no-op when
-ORCHESTRATOR_STREAM_SOCKET / job id are unset. MCP / skill_view RPC need
-ORCHESTRATOR_RPC_SOCKET (+ ORCHESTRATOR_RPC_TOKEN) when the host bridge is up.
+ORCHESTRATOR_STREAM_SOCKET / job id are unset.
 """
 
 from __future__ import annotations
@@ -12,7 +11,6 @@ import builtins
 import json
 import os
 import socket
-import subprocess
 import threading
 from typing import Any
 
@@ -73,88 +71,3 @@ def _streaming_print(*args: Any, **kwargs: Any) -> None:
 
 # Skills that `from orchestrator_tools import print` get the streaming print.
 print = _streaming_print  # noqa: A001
-
-
-def sandbox_run(command: str) -> dict[str, Any]:
-    """Run a shell command in the current environment (already the sandbox when provisioned)."""
-    cmd = (command or "").strip()
-    if not cmd:
-        return {"exit_code": 2, "stdout": "", "stderr": "empty command"}
-    try:
-        proc = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        out = exc.stdout if isinstance(exc.stdout, str) else ""
-        err = exc.stderr if isinstance(exc.stderr, str) else "timed out"
-        return {"exit_code": 124, "stdout": out, "stderr": err}
-    return {
-        "exit_code": proc.returncode or 0,
-        "stdout": proc.stdout or "",
-        "stderr": proc.stderr or "",
-    }
-
-
-def _rpc_call(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-    path = os.environ.get("ORCHESTRATOR_RPC_SOCKET", "").strip()
-    if not path or not os.path.exists(path):
-        return {
-            "ok": False,
-            "error": f"{tool_name} requires ORCHESTRATOR_RPC_SOCKET (host bridge)",
-        }
-    job_id = _job_id()
-    request = json.dumps(
-        {
-            "tool": tool_name,
-            "args": args,
-            "token": os.environ.get("ORCHESTRATOR_RPC_TOKEN", ""),
-            "job_id": job_id,
-            "task_id": job_id,
-            "project_id": os.environ.get("ORCHESTRATOR_PROJECT_ID", ""),
-        }
-    ) + "\n"
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(300)
-            sock.connect(path)
-            sock.sendall(request.encode())
-            chunks: list[bytes] = []
-            while True:
-                data = sock.recv(65536)
-                if not data:
-                    break
-                chunks.append(data)
-                if b"\n" in data:
-                    break
-        raw = b"".join(chunks).decode().strip().split("\n", 1)[0]
-        return json.loads(raw) if raw else {"ok": False, "error": "empty RPC response"}
-    except (OSError, json.JSONDecodeError) as exc:
-        return {"ok": False, "error": str(exc)}
-
-
-def mcp_ensure(spec_json: str = "", name: str = "") -> dict[str, Any]:
-    return _rpc_call("mcp_ensure", {"spec_json": spec_json, "name": name})
-
-
-def mcp_list_tools(server: str = "") -> dict[str, Any]:
-    return _rpc_call("mcp_list_tools", {"server": server})
-
-
-def mcp_call(server: str, tool: str, arguments_json: str = "{}") -> dict[str, Any]:
-    return _rpc_call(
-        "mcp_call",
-        {"server": server, "tool": tool, "arguments_json": arguments_json},
-    )
-
-
-def mcp_close(server: str = "") -> dict[str, Any]:
-    return _rpc_call("mcp_close", {"server": server})
-
-
-def skill_view(name: str, path: str = "") -> dict[str, Any]:
-    return _rpc_call("skill_view", {"name": name, "path": path})

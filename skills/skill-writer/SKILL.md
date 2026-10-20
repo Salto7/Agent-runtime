@@ -1,38 +1,38 @@
 ---
 name: skill-writer
-description: >
-  Draft a Peon Agent Skill (SKILL.md + scripts/run.py) from an operator prompt,
-  using available catalog tools. Output must pass SkillLinter. Use when creating
-  or scaffolding a new engagement skill.
-allowed-tools: run_skill_script skills_list skill_view
-metadata:
-  version: 1.0.0
-  category: platform
-  tags: skills,authoring,linter
-  jobable: 'false'
-  lifecycle: short
-  max_iterations: '8'
+description: Draft a Claude Agent Skill (SKILL.md + a normal script) from an operator prompt. The pack must pass skills-ref so it can run in Claude and in Peon. Use when creating or scaffolding a new skill.
+allowed-tools: Bash Read
 ---
 
 ## Goal
-Produce a **lint-clean** skill directory layout under `workspace/learn/skill/<name>/`:
+Produce a **skills-ref-clean** Claude Agent Skill under `workspace/learn/skill/<name>/`:
 
-- SKILL.md — agentskills frontmatter + Peon metadata
-- scripts/run.py — thin entry (prefer run_binary / skill_entry helpers)
-- optional references docs when linked from the body
+- SKILL.md — Agent Skills frontmatter (name, description, allowed-tools Bash and Read)
+- a bash entry with a shebang that execs the required CLI
+- a Run section that calls `run_skill_script`, not `bash scripts/run.sh`
+- optional reference docs when the body links them
+
+Do not emit Peon-only helpers or `metadata.jobable`. Role backstory already injects collaboration and memory tools.
+
+**Collaboration & memory are runtime, not authored.** Peon injects the A2A
+(`send_message`/`check_inbox`/`go_idle`) and memory (`recall_memory`/`save_memory`)
+contract through the role at run time, so a portable pack must **not** hardcode
+those tool names. Describe reporting findings up / consuming upstream results in
+plain prose only; the standard "Collaboration & memory" block belongs in
+Peon-native packs, not skills-ref-clean ones.
 
 ## Scripts
-- `scripts/run.py` — project entry
-
-## Run
-```
-run_skill_script("skill-writer", "scripts/run.py", command="<skill request>")
-```
+- `scripts/run.sh` — authoring entry (argv = skill request)
 
 ## Lint requirements (must pass)
 - Frontmatter name + description; directory name == name
-- Product fields under metadata (category, jobable, lifecycle, …)
+- `allowed-tools` uses Claude names (`Bash`, `Read`, `Write`, `Edit`)
+- Scripts are normal executables with a shebang
 - Body file refs must exist
-- Prefer jobable true for engagement skills unless the operator says otherwise
 
 See [prompt](references/PROMPT.md) for the JSON contract.
+
+## Run
+```
+run_skill_script("skill-writer", "scripts/run.sh", args='["Draft a skill that …"]')
+```

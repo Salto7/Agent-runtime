@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Suggest tools/catalog YAML from ORCHESTRATOR_SKILL_COMMAND / argv prompt."""
+"""Suggest tools/catalog YAML from argv prompt."""
 from __future__ import annotations
 
 import json
@@ -22,17 +22,17 @@ def _prompt() -> str:
 def _run() -> int:
     prompt = _prompt()
     if not prompt:
-        print("usage: provide a tool request via command=…", file=sys.stderr)
+        print("usage: provide a tool request as argv", file=sys.stderr)
         return 2
 
     out_dir = workspace_path() / "learn"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        from orchestrator.learn import LearnAuthoring
+        from orchestrator.learn.authoring import LearnAuthoring
 
-        result = LearnAuthoring.suggest_tool(prompt)
-    except Exception as exc:  # noqa: BLE001
+        result = LearnAuthoring.shared().suggest_tool(prompt)
+    except Exception as exc:  # noqa: BLE001 — surface to skill stream
         (out_dir / "notes.md").write_text(
             f"# tools-suggestor failed\n\n```\n{exc}\n```\n",
             encoding="utf-8",

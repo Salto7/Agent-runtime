@@ -1,4 +1,4 @@
-"""tools/catalog: load YAML definitions and provision CLIs before skill runs."""
+"""tools/catalog: load YAML definitions and provision CLIs before role runs."""
 
 from __future__ import annotations
 
@@ -6,24 +6,25 @@ import json
 import logging
 import os
 import re
-import shlex
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar, Iterable
+from typing import Any
 
 import yaml
 
-from orchestrator.sandbox import SandboxSession
-from orchestrator.utils.service import SharedService
+from orchestrator.config import get_config
+from orchestrator.tools.install_step_base import InstallStepBase
+from orchestrator.tools.install_steps import (
+    AptInstallStep,
+    CustomInstallStep,
+    _fallback_rank,
+    _steps,
+)
+from orchestrator.tools.install_steps.util import _run
+from orchestrator.utils.commands import clear_command_caches
+from orchestrator.utils.service import SharedServiceBase
 
 logger = logging.getLogger(__name__)
-
-_REPO_RE = re.compile(
-    r"^(?:https?://github\.com/)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$"
-)
-_TRANSITIVE: dict[str, list[str]] = {}
-_GH_SCRIPT = Path(__file__).with_name("assets") / "install_github_release.sh"
 
 
 def normalize_verify(raw: Any) -> list[dict[str, Any]]:
@@ -61,8 +62,10 @@ class CatalogTool:
     binaries: list[str] = field(default_factory=list)
     install: list[dict[str, Any]] = field(default_factory=list)
     verify: list[dict[str, Any]] = field(default_factory=list)
-    skills: list[str] = field(default_factory=list)
+    roles: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    # Other catalog tools this one needs (declared in its yaml ``requires:``).
+    requires: list[str] = field(default_factory=list)
 
     @property
     def is_image_tier(self) -> bool:
@@ -100,317 +103,27 @@ class ProvisionResult:
         }
 
 
-def _run(
-    cmd: list[str] | str, *, timeout: int = 300, shell: bool = False
-) -> tuple[int, str, str]:
-    res = SandboxSession.current().exec(cmd, timeout=timeout, shell=shell)
-    return res.code, res.stdout, res.stderr
-
-
-def _pkgs(raw: dict[str, Any]) -> list[str]:
-    return [str(p).strip() for p in (raw.get("packages") or []) if str(p).strip()]
-
-
-# apt may install python3/nodejs while upstream scripts use `#!/usr/bin/env python|node`.
-_APT_ENV_ALIASES: tuple[tuple[str, str], ...] = (
-    ("python", "python3"),
-    ("node", "nodejs"),
-)
-
-
-def _ensure_env_command_aliases(installed_packages: Iterable[str]) -> None:
-    pkgs = {p.strip().lower() for p in installed_packages}
-    for alias, target in _APT_ENV_ALIASES:
-        if target not in pkgs:
-            continue
-        _run(
-            [
-                "bash",
-                "-lc",
-                f"command -v {alias} >/dev/null 2>&1 || "
-                f"{{ command -v {target} >/dev/null 2>&1 && "
-                f'ln -sfn "$(command -v {target})" "/usr/local/bin/{alias}"; }}',
-            ],
-            timeout=30,
-        )
-
-
-class InstallStep(ABC):
-    """One catalog install action (custom / apt / github_release / pip / git_clone)."""
-
-    _registry: ClassVar[dict[str, type[InstallStep]]] = {}
-    _TYPE_ALIASES: ClassVar[dict[str, str]] = {
-        "command": "custom",
-        "shell": "custom",
-        "run": "custom",
-        "bash": "custom",
-        "script": "custom",
-    }
-
-    def __init_subclass__(cls, *, step_type: str = "", **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        if step_type:
-            InstallStep._registry[step_type] = cls
-
-    @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> InstallStep | None:
-        stype = str(raw.get("type") or "").strip().lower()
-        if not stype and str(raw.get("command") or "").strip():
-            stype = "custom"
-        stype = cls._TYPE_ALIASES.get(stype, stype)
-        impl = cls._registry.get(stype)
-        return impl(raw) if impl else None  # type: ignore[call-arg]
-
-    @abstractmethod
-    def apply(self, *, binary: str = "", tool_id: str = "") -> tuple[bool, str]: ...
-
-
-def _under_catalog(catalog_dir: Path, path: Path) -> bool:
-    try:
-        path.resolve().relative_to(catalog_dir.resolve())
-        return True
-    except (OSError, ValueError):
-        return False
-
-
-class CustomInstallStep(InstallStep, step_type="custom"):
-    """Priority install — runs before apt / github_release / pip / git_clone.
-
-    YAML::
-
-        install:
-          - type: custom
-            command: "curl -fsSL https://example/install.sh | bash"
-          - type: apt
-            packages: [fallback-pkg]
-
-        # Or reference the tool's install script (same stem as the YAML):
-        # tools/catalog/mytool.yaml + tools/catalog/mytool.sh
-          - type: custom
-            command: mytool.sh
-
-    ``command`` is either an inline shell line, or a relative path to the single
-    allowed ``{tool_id}.sh`` beside ``{tool_id}.yaml`` (skill-style relative path).
-    """
-
-    def __init__(self, raw: dict[str, Any]) -> None:
-        self.command = str(raw.get("command") or raw.get("run") or "").strip()
-        try:
-            self.timeout = max(30, int(raw.get("timeout") or 600))
-        except (TypeError, ValueError):
-            self.timeout = 600
-
-    def apply(self, *, binary: str = "", tool_id: str = "") -> tuple[bool, str]:
-        del binary
-        tid = (tool_id or "").strip()
-        catalog_dir = ToolCatalog.shared().catalog_dir()
-        payload, label = self._resolve_payload(tid, catalog_dir)
-        if not payload:
-            return False, label or "empty custom install"
-        code, out, err = _run(["bash", "-lc", payload], timeout=self.timeout)
-        if code:
-            detail = (err or out).strip()[:500]
-            return False, f"custom install: {detail or f'exit {code}'}"
-        return True, label
-
-    def _resolve_payload(self, tool_id: str, catalog_dir: Path) -> tuple[str, str]:
-        """Inline shell, or the tool's ``{id}.sh`` under the catalog dir."""
-        raw = self.command
-        script_name = f"{tool_id}.sh" if tool_id else ""
-        script_path = (catalog_dir / script_name).resolve() if script_name else None
-
-        def _is_script_ref(text: str) -> bool:
-            if not script_name:
-                return False
-            norm = text.replace("\\", "/").lstrip("./")
-            return (
-                norm == script_name
-                or norm.endswith(f"/{script_name}")
-                or Path(norm).name == script_name
-            )
-
-        if script_path is not None and (
-            not raw or _is_script_ref(raw)
-        ):
-            if script_path.is_file() and _under_catalog(catalog_dir, script_path):
-                try:
-                    body = script_path.read_text(encoding="utf-8")
-                except OSError as exc:
-                    return "", f"cannot read {script_name}: {exc}"
-                if not body.strip():
-                    return "", f"empty install script {script_name}"
-                return body, f"custom:script:{script_name}"
-            if raw:
-                return "", f"missing install script {script_name} (beside {tool_id}.yaml)"
-            return "", f"empty custom install (no command and no {tool_id}.sh)"
-
-        if not raw:
-            return "", "empty custom install"
-        if raw.endswith(".sh") and ("/" in raw or "\\" in raw or Path(raw).name != raw):
-            # Disallow other script paths — only {tool_id}.sh is allowed.
-            return (
-                "",
-                f"custom script must be {script_name or '{tool_id}.sh'} beside the tool YAML",
-            )
-        return raw, "custom:inline"
-
-
-class AptInstallStep(InstallStep, step_type="apt"):
-    def __init__(self, raw: dict[str, Any]) -> None:
-        self.packages = _pkgs(raw)
-
-    def apply(self, *, binary: str = "", tool_id: str = "") -> tuple[bool, str]:
-        del binary, tool_id
-        if not self.packages:
-            return True, "no apt packages"
-        _run(["apt-get", "update", "-qq"], timeout=180)
-        code, out, err = _run(
-            ["apt-get", "install", "-y", "--no-install-recommends", *self.packages],
-            timeout=600,
-        )
-        if code:
-            return False, f"apt install {self.packages}: {(err or out).strip()[:400]}"
-        _ensure_env_command_aliases(self.packages)
-        return True, f"apt:{','.join(self.packages)}"
-
-
-class GitHubReleaseInstallStep(InstallStep, step_type="github_release"):
-    def __init__(self, raw: dict[str, Any]) -> None:
-        self.repo = str(raw.get("repo") or "").strip()
-        self.binary = str(raw.get("binary") or "").strip()
-        self.asset_substr = str(raw.get("asset_substr") or "linux_amd64").strip()
-        self.tag = str(raw.get("tag") or "").strip()
-
-    def apply(self, *, binary: str = "", tool_id: str = "") -> tuple[bool, str]:
-        del tool_id
-        match = _REPO_RE.match(self.repo)
-        if not match:
-            return False, f"invalid github repo {self.repo!r}"
-        owner, name = match.group(1), match.group(2)
-        bin_name = (self.binary or binary or name).strip()
-        if not bin_name:
-            return False, "binary name required"
-        if not _GH_SCRIPT.is_file():
-            return False, f"missing install script {_GH_SCRIPT}"
-        script = _GH_SCRIPT.read_text(encoding="utf-8")
-        for key, val in {
-            "__OWNER__": shlex.quote(owner),
-            "__REPO__": shlex.quote(name),
-            "__BINARY__": shlex.quote(bin_name),
-            "__TAG__": shlex.quote(self.tag),
-            "__ASSET_SUBSTR__": shlex.quote(self.asset_substr or "linux_amd64"),
-        }.items():
-            script = script.replace(key, val)
-        code, out, err = _run(["bash", "-lc", script], timeout=600)
-        if code:
-            return False, f"github {self.repo}/{bin_name}: {(err or out).strip()[:500]}"
-        return True, f"github:{bin_name}"
-
-
-class PipInstallStep(InstallStep, step_type="pip"):
-    def __init__(self, raw: dict[str, Any]) -> None:
-        self.packages = _pkgs(raw)
-
-    def apply(self, *, binary: str = "", tool_id: str = "") -> tuple[bool, str]:
-        del binary, tool_id
-        if not self.packages:
-            return True, "no pip packages"
-        code, out, err = _run(
-            ["python3", "-m", "pip", "install", "--break-system-packages", *self.packages],
-            timeout=600,
-        )
-        if code:
-            return False, f"pip {self.packages}: {(err or out).strip()[:300]}"
-        return True, f"pip:{' '.join(self.packages)}"
-
-
-class GitCloneInstallStep(InstallStep, step_type="git_clone"):
-    """Shallow-clone a GitHub repo and symlink an entrypoint onto PATH."""
-
-    def __init__(self, raw: dict[str, Any]) -> None:
-        self.repo = str(raw.get("repo") or "").strip()
-        self.ref = str(raw.get("ref") or "").strip()
-        self.entrypoint = str(raw.get("entrypoint") or "").strip()
-        self.binary = str(raw.get("binary") or "").strip()
-        try:
-            self.depth = max(1, int(raw.get("depth") or 1))
-        except (TypeError, ValueError):
-            self.depth = 1
-
-    def apply(self, *, binary: str = "", tool_id: str = "") -> tuple[bool, str]:
-        del tool_id
-        match = _REPO_RE.match(self.repo)
-        if not match:
-            return False, f"invalid github repo {self.repo!r}"
-        owner, name = match.group(1), match.group(2)
-        entry = (self.entrypoint or "").strip().lstrip("/")
-        if not entry or entry.startswith("..") or "/../" in f"/{entry}/":
-            return False, "entrypoint required (repo-relative path)"
-        bin_name = (self.binary or binary or Path(entry).stem).strip()
-        if not bin_name:
-            return False, "binary name required"
-        dest = Path("/opt/catalog-tools") / name
-        url = f"https://github.com/{owner}/{name}.git"
-        entry_path = dest / entry
-        bin_path = f"/usr/local/bin/{bin_name}"
-        AptInstallStep({"packages": ["git"]}).apply()
-        script = f"""
-set -euo pipefail
-mkdir -p /opt/catalog-tools
-rm -rf {shlex.quote(str(dest))}
-git clone --depth {self.depth} {shlex.quote(url)} {shlex.quote(str(dest))}
-"""
-        if self.ref:
-            script += f"git -C {shlex.quote(str(dest))} fetch --depth {self.depth} origin {shlex.quote(self.ref)}\n"
-            script += f"git -C {shlex.quote(str(dest))} checkout {shlex.quote(self.ref)}\n"
-        script += f"""
-ENTRY={shlex.quote(str(entry_path))}
-test -f "$ENTRY"
-chmod +x "$ENTRY" || true
-ln -sfn "$ENTRY" {shlex.quote(bin_path)}
-"""
-        code, out, err = _run(["bash", "-lc", script], timeout=600)
-        if code:
-            return False, f"git_clone {self.repo}: {(err or out).strip()[:500]}"
-        return True, f"git_clone:{bin_name}"
-
-
-def _steps(raw_steps: list[Any]) -> list[InstallStep]:
-    out: list[InstallStep] = []
-    for raw in raw_steps or []:
-        if isinstance(raw, dict):
-            step = InstallStep.from_dict(raw)
-            if step:
-                out.append(step)
-    return out
-
-
-def _fallback_rank(step: InstallStep) -> int:
-    """After custom: apt (batched) → github_release → pip → git_clone."""
-    if isinstance(step, GitHubReleaseInstallStep):
-        return 0
-    if isinstance(step, PipInstallStep):
-        return 1
-    if isinstance(step, GitCloneInstallStep):
-        return 2
-    return 9
-
-
-class ToolCatalog(SharedService):
+class ToolCatalog(SharedServiceBase):
     """Cached view of ``tools/catalog/*.yaml``."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, root: Path | None = None) -> None:
         self._cache: dict[str, CatalogTool] | None = None
+        self._root = Path(root).resolve() if root is not None else None
 
     def catalog_dir(self) -> Path:
+        if self._root is not None:
+            return self._root
         raw = (os.environ.get("TOOLS_CATALOG_DIR") or "").strip()
         if raw:
             return Path(raw).resolve()
-        from orchestrator.config import get_config
-
         return Path(get_config().tools_catalog_dir).resolve()
 
     def invalidate(self) -> None:
+        try:
+            clear_command_caches()
+        except Exception as exc:
+            logger.warning("clearing command caches failed: %s", exc, exc_info=True)
+
         self._cache = None
 
     @staticmethod
@@ -421,35 +134,8 @@ class ToolCatalog(SharedService):
             tool.tier,
             tool.binary,
             tuple(tool.binaries or []),
-            tuple(tool.skills or []),
             tuple(tool.tags or []),
         )
-
-    def reload_tools(self) -> dict:
-        """Force-rescan ``tools/catalog`` YAML (same path as ``invalidate`` + ``all``)."""
-        # Snapshot the in-memory cache only — do not reload first, or a
-        # just-edited YAML would look unchanged in the diff.
-        if self._cache is not None:
-            before = {tid: self._fingerprint(t) for tid, t in self._cache.items()}
-            before_desc = {tid: t.description for tid, t in self._cache.items()}
-        else:
-            current = self.all()
-            before = {tid: self._fingerprint(t) for tid, t in current.items()}
-            before_desc = {tid: t.description for tid, t in current.items()}
-        self.invalidate()
-        after = self.all()
-
-        diff: dict[str, list[dict]] = {"added": [], "removed": [], "modified": []}
-        for tid in sorted(set(after) - set(before)):
-            diff["added"].append({"id": tid, "description": after[tid].description})
-        for tid in sorted(set(before) - set(after)):
-            diff["removed"].append({"id": tid, "description": before_desc[tid]})
-        for tid in sorted(set(before) & set(after)):
-            if before[tid] != self._fingerprint(after[tid]):
-                diff["modified"].append(
-                    {"id": tid, "description": after[tid].description}
-                )
-        return diff
 
     def all(self) -> dict[str, CatalogTool]:
         if self._cache is not None:
@@ -503,7 +189,8 @@ class ToolCatalog(SharedService):
                 break
         return out
 
-    def for_skills(self, skill_names: list[str] | set[str]) -> list[CatalogTool]:
+    def for_keys(self, keys: list[str] | set[str]) -> list[CatalogTool]:
+        """Resolve catalog tools from CLI/binary/tool id keys."""
         catalog = self.all()
         expanded: list[str] = []
         seen: set[str] = set()
@@ -514,46 +201,29 @@ class ToolCatalog(SharedService):
                 return
             seen.add(name)
             expanded.append(name)
-            for dep in _TRANSITIVE.get(name, []):
+            tool = self.lookup(name)
+            for dep in tool.requires if tool is not None else ():
                 add(dep)
 
-        for raw in skill_names or []:
+        for raw in keys or []:
             add(str(raw))
 
         tool_ids: list[str] = []
-        for skill_name in expanded:
-            for tid in self._toolkit_tool_ids(skill_name):
-                if tid not in tool_ids:
-                    tool_ids.append(tid)
+        for key in expanded:
+            tool = self.lookup(key)
+            if tool is None or tool.is_image_tier:
+                continue
+            if tool.id not in tool_ids:
+                tool_ids.append(tool.id)
 
         out: list[CatalogTool] = []
         for tid in tool_ids:
             entry = catalog.get(tid)
             if entry is None:
-                logger.warning("Unknown catalog tool %r for skills %s", tid, expanded)
+                logger.warning("Unknown catalog tool %r for keys %s", tid, expanded)
                 continue
             if not entry.is_image_tier:
                 out.append(entry)
-        return out
-
-    def _toolkit_tool_ids(self, skill_name: str) -> list[str]:
-        # deferred: SkillRegistry → skills.execute → runtime_shell → runtime → catalog
-        from orchestrator.skills.misc.registry import SkillRegistry
-
-        skill = SkillRegistry.shared().load_skill((skill_name or "").strip())
-        if skill is None:
-            return []
-        out: list[str] = []
-        for item in skill.toolkit or []:
-            key = str(item).strip().lower()
-            if not key:
-                continue
-            tool = self.lookup(key)
-            if tool is None:
-                logger.warning("No catalog tool for skill %s CLI %r", skill_name, key)
-                continue
-            if tool.id not in out:
-                out.append(tool.id)
         return out
 
     @staticmethod
@@ -569,11 +239,7 @@ class ToolCatalog(SharedService):
         if not cid or cid.startswith("_"):
             return None
         binary = str(raw.get("binary") or raw.get("name") or cid).strip()
-        binaries = [
-            str(b).strip()
-            for b in (raw.get("binaries") or [])
-            if str(b).strip()
-        ]
+        binaries = [str(b).strip() for b in (raw.get("binaries") or []) if str(b).strip()]
         if binary and binary not in binaries:
             binaries = [binary, *binaries]
         return CatalogTool(
@@ -583,30 +249,31 @@ class ToolCatalog(SharedService):
             tier=str(raw.get("tier") or "catalog").strip(),
             binary=binary,
             binaries=binaries,
-            install=list(raw.get("install") or [])
-            if isinstance(raw.get("install"), list)
-            else [],
+            install=list(raw.get("install") or []) if isinstance(raw.get("install"), list) else [],
             verify=normalize_verify(raw.get("verify")),
-            skills=[str(s).strip() for s in (raw.get("skills") or []) if str(s).strip()],
+            # Roles bind skills through inferred affinity, not tool YAML.
+            roles=[],
             tags=[str(t).strip() for t in (raw.get("tags") or []) if str(t).strip()],
+            requires=[str(t).strip() for t in (raw.get("requires") or []) if str(t).strip()]
+            if isinstance(raw.get("requires"), list)
+            else [],
         )
 
 
-class CatalogProvisioner(SharedService):
-    """Verify/install catalog CLIs for skills (host or worker container)."""
+class CatalogProvisioner(SharedServiceBase):
+    """Verify/install catalog CLIs for role allowlists (host or worker container)."""
 
     def __init__(self, *, catalog: ToolCatalog | None = None) -> None:
         self._catalog = catalog or ToolCatalog.shared()
 
-    def provision(
-        self, skill_names: list[str], *, workspace: Path | None = None
-    ) -> ProvisionResult:
+    def provision(self, keys: list[str], *, workspace: Path | None = None) -> ProvisionResult:
         result = ProvisionResult()
-        tools = self._catalog.for_skills(skill_names)
+        tools = self._catalog.for_keys(keys)
         result.cli_ids = [t.id for t in tools]
         needed = [t for t in tools if not self._verified(t)]
         if needed:
-            # Priority: custom → apt → github_release → pip / git_clone.
+            # Runtime order: custom (if any) runs first as a bootstrap attempt;
+            # recipes should still prefer apt → github_release → git_clone → pip → custom.
             for tool in needed:
                 self._apply_custom_steps(tool, result)
             remaining = [t for t in needed if not self._verified(t)]
@@ -617,7 +284,7 @@ class CatalogProvisioner(SharedService):
         result.verified.extend(t.id for t in tools if self._verified(t))
         # de-dupe verified while preserving order
         result.verified = list(dict.fromkeys(result.verified))
-        self._write_manifest(workspace, skill_names, result)
+        self._write_manifest(workspace, keys, result)
         return result
 
     def provision_binary(self, binary: str) -> tuple[bool, str]:
@@ -625,7 +292,8 @@ class CatalogProvisioner(SharedService):
         if tool is None:
             return False, f"no catalog entry for {binary!r}"
         if self._verified(tool):
-            return True, f"{tool.binary or tool.id} verified"
+            label = tool.binary or tool.id
+            return True, f"{label} already installed"
         result = ProvisionResult()
         self._apply_custom_steps(tool, result)
         if self._verified(tool):
@@ -634,6 +302,16 @@ class CatalogProvisioner(SharedService):
         if self._verified(tool):
             return True, f"installed {tool.id}"
         return False, "; ".join(result.errors) or "verify failed"
+
+    def _apply_step(self, step: InstallStepBase, *, binary: str, tool_id: str) -> tuple[bool, str]:
+        """Run one step. Custom scripts resolve beside this provisioner's catalog."""
+        if isinstance(step, CustomInstallStep):
+            return step.apply(
+                binary=binary,
+                tool_id=tool_id,
+                catalog_dir=self._catalog.catalog_dir(),
+            )
+        return step.apply(binary=binary, tool_id=tool_id)
 
     def _apply_custom_steps(self, tool: CatalogTool, result: ProvisionResult) -> bool:
         """Run ``type: custom`` install steps first. Soft-fail → fall through."""
@@ -645,33 +323,28 @@ class CatalogProvisioner(SharedService):
             if not isinstance(step, CustomInstallStep):
                 continue
             ran = True
-            ok, msg = step.apply(binary=binary, tool_id=tool.id)
+            ok, msg = self._apply_step(step, binary=binary, tool_id=tool.id)
             if ok:
                 if msg and msg not in result.installed:
                     result.installed.append(msg)
                 if self._verified(tool):
                     return True
             else:
+                result.errors.append(f"{tool.id}: {msg}")
                 logger.info(
                     "priority custom install for %s did not verify (%s); falling back",
                     tool.id,
                     msg,
                 )
-        if ran and self._verified(tool):
-            return True
-        return False
+        return bool(ran and self._verified(tool))
 
     def _provision_tool(
         self, tool: CatalogTool, result: ProvisionResult, *, skip_apt: bool
     ) -> None:
         if self._verified(tool):
             return
-        steps = [
-            s for s in _steps(tool.install) if not isinstance(s, CustomInstallStep)
-        ]
-        if not steps and not any(
-            isinstance(s, CustomInstallStep) for s in _steps(tool.install)
-        ):
+        steps = [s for s in _steps(tool.install) if not isinstance(s, CustomInstallStep)]
+        if not steps and not any(isinstance(s, CustomInstallStep) for s in _steps(tool.install)):
             result.errors.append(f"{tool.id}: no install steps in catalog")
             return
         if not steps:
@@ -686,19 +359,36 @@ class CatalogProvisioner(SharedService):
             (s for s in steps if not isinstance(s, AptInstallStep)),
             key=_fallback_rank,
         ):
-            ok, msg = step.apply(binary=binary, tool_id=tool.id)
+            ok, msg = self._apply_step(step, binary=binary, tool_id=tool.id)
             if not ok:
                 result.errors.append(f"{tool.id}: {msg}")
-                return
+                continue   # the next source is the fallback (github_release → pip → git_clone)
             if msg and msg not in result.installed:
                 result.installed.append(msg)
-        if not self._verified(tool) and not any(
-            e.startswith(f"{tool.id}:") for e in result.errors
-        ):
+            if self._verified(tool):
+                break
+        if self._verified(tool):
+            result.errors = [e for e in result.errors if not e.startswith(f"{tool.id}:")]   # a fallback worked
+            return
+        if not self._verified(tool) and not any(e.startswith(f"{tool.id}:") for e in result.errors):
             result.errors.append(f"{tool.id}: verify failed after install")
 
     @staticmethod
+    def _cli_present(tool: CatalogTool) -> bool:
+        """Same PATH gate as ``InstallResolver`` / ``ProvisionService``."""
+        # circular: install → CatalogProvisioner / ToolCatalog
+        from orchestrator.tools.install import cli_on_path
+
+        return cli_on_path(tool.binary or tool.id)
+
+    @staticmethod
     def _verified(tool: CatalogTool) -> bool:
+        """Ready when CLI is on PATH; YAML ``verify`` still required when present."""
+        if not CatalogProvisioner._cli_present(tool):
+            return False
+        verify_steps = normalize_verify(tool.verify)
+        if not verify_steps:
+            return True
         return bool(CatalogProvisioner.run_verify(tool).get("ok"))
 
     @staticmethod
@@ -709,11 +399,17 @@ class CatalogProvisioner(SharedService):
         chunks: list[str] = []
         verify_steps = normalize_verify(tool.verify)
         if not verify_steps:
+            on_path = CatalogProvisioner._cli_present(tool)
+            name = (tool.binary or tool.id or "").strip()
             return {
-                "ok": False,
+                "ok": on_path,
                 "steps": [],
-                "output": "(no verify commands in YAML — add verify: [{command: \"…\"}])",
+                "output": (
+                    f"(no verify commands — {name or tool.id} "
+                    f"{'on PATH' if on_path else 'not on PATH'})"
+                ),
             }
+
         for step in verify_steps:
             cmd = str(step.get("command") or "").strip()
             if not cmd:
@@ -767,19 +463,14 @@ class CatalogProvisioner(SharedService):
         (result.installed if ok else result.errors).append(msg)
 
     @staticmethod
-    def _write_manifest(
-        workspace: Path | None, skill_names: list[str], result: ProvisionResult
-    ) -> None:
+    def _write_manifest(workspace: Path | None, keys: list[str], result: ProvisionResult) -> None:
         if workspace is None:
             return
         try:
             path = Path(workspace) / ".sandbox-cli-manifest.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
-                json.dumps(
-                    {"skill_names": list(skill_names or []), **result.to_dict()}, indent=2
-                )
-                + "\n",
+                json.dumps({"cli_keys": list(keys or []), **result.to_dict()}, indent=2) + "\n",
                 encoding="utf-8",
             )
         except OSError:

@@ -1,6 +1,6 @@
 # tools-suggestor
 
-Write a `tools/catalog/*.yaml` entry so the tool installs and passes checks in a Docker lab based on **debian:bookworm-slim**. That image is nearly empty: no `git`, no `python3`, no extra CLIs until your recipe adds them.
+Write a `tools/catalog/*.yaml` entry so the tool installs and passes checks in the Peon sandbox image (`peon-sandbox:local`, Kali rolling). Many CLIs are already on `PATH`. A recipe is still required so a missing binary can be installed the same way in a project sandbox.
 
 Return **JSON only** (no markdown wrapper):
 
@@ -15,12 +15,12 @@ Return **JSON only** (no markdown wrapper):
 
 ## Choosing an install method
 
-Use the **easiest** option that works on Debian bookworm:
+Prefer the easiest option that works on Kali (same order as catalog provision):
 
-- **In Debian repos?** → `type: apt` only (example: `sqlmap` → package `sqlmap`, binary `sqlmap`).
+- **Already a Kali/Debian package?** → `type: apt` only (example: `sqlmap` → package `sqlmap`, binary `sqlmap`).
 - **Release binary on GitHub?** → `type: github_release`.
-- **Clone a repo and run a file inside it?** → `type: git_clone` with `repo`, `entrypoint`, `binary`, plus `type: apt` for the runtime interpreter/deps the entrypoint expects (it might be `python3`, `nodejs`, etc.).
-- **PyPI?** → `type: pip` (install the interpreter runtime via apt if verify uses it).
+- **Clone a repo and run a file inside it?** → `type: apt` for git and the interpreter, then `type: git_clone` with `repo`, `entrypoint`, and `binary`.
+- **PyPI?** → `type: pip` (apt the interpreter first if verify needs it).
 - **Only when nothing above fits** → `type: custom` (inline command or `{id}.sh`). Put `install_script` in JSON only when YAML says `command: {id}.sh`.
 
 ## Custom scripts

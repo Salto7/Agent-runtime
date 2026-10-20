@@ -1,0 +1,5 @@
+bindings:
+- role_id: project-manager
+  score: 0.7
+  lead: false
+source: seed

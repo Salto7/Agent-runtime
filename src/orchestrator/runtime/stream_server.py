@@ -11,6 +11,7 @@ import logging
 import os
 import socket
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
@@ -52,6 +53,10 @@ class StreamSocketServer:
             target=self._serve, name="stream-sock-accept", daemon=True
         )
         self._thread.start()
+        for _ in range(200):  # return only once the socket is bound: clients check for the file and drop if absent
+            if os.path.exists(self.socket_path):
+                break
+            time.sleep(0.01)
         logger.info("Stream Unix socket listening on %s", self.socket_path)
 
     def stop(self) -> None:

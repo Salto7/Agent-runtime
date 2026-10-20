@@ -1,6 +1,8 @@
-"""Append finding records for the host worker to ingest (no framework imports).
+"""Append finding records for the peon worker to ingest (no Django).
 
-The host re-normalizes on ingest — this queue only requires a title.
+Engagement discoveries about any subject class (with evidence). Peon
+re-normalizes on ingest — this queue only requires a title. Do not queue
+job/objective/agent status here.
 """
 
 from __future__ import annotations

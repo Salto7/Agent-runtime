@@ -13,12 +13,11 @@ from typing import Any
 
 import yaml
 
-from orchestrator.skills.misc.utils import (
+from orchestrator.skills.common import (
     LINT_LIFECYCLES,
     MAX_COMPATIBILITY_LEN,
     MAX_DESCRIPTION_LEN,
     MAX_NAME_LEN,
-    SPEC_FIELDS,
     LintIssue,
     extract_file_refs,
     find_manifest,
@@ -27,34 +26,19 @@ from orchestrator.skills.misc.utils import (
     split_frontmatter,
     valid_skill_name,
 )
-from orchestrator.utils.service import SharedService
+from orchestrator.skills.manifest import (
+    AGENTSKILLS_FIELDS,
+    CLAUDE_EXTENSION_FIELDS,
+    PEON_META_FIELDS,
+    ParseProfile,
+)
+from orchestrator.utils.service import SharedServiceBase
 
 # Product fields that belong under ``metadata:`` (Peon layout), not top-level.
-# Legacy top-level ``taskable`` — prefer ``jobable`` under metadata.
-METADATA_TOP_LEVEL_FIELDS = frozenset(
-    {
-        "category",
-        "tags",
-        "aliases",
-        "lifecycle",
-        "jobable",
-        "taskable",
-        "tools",
-        "capabilities",
-        "requires_clis",
-        "toolkit",
-        "version",
-        "manually_created",
-        "protected",
-        "direct_answer",
-        "max_iterations",
-        "mcp",
-        "allowed_tools",
-    }
-)
+METADATA_TOP_LEVEL_FIELDS = PEON_META_FIELDS
 
 
-class SkillLinter(SharedService):
+class SkillLinter(SharedServiceBase):
     @staticmethod
     def lint_dir(skill_dir: Path) -> dict[str, Any]:
         skill_dir = Path(skill_dir)
@@ -117,7 +101,11 @@ class SkillLinter(SharedService):
         if not isinstance(data, dict):
             return [LintIssue("error", "yaml_mapping", "Frontmatter must be a YAML mapping.")]
 
-        issues = SkillLinter._spec_issues(data, skill_dir)
+        issues = SkillLinter._spec_issues(
+            data,
+            skill_dir,
+            profile=ParseProfile.PEON,
+        )
         issues.extend(SkillLinter._meta_issues(data.get("metadata") or {}))
         if not (body or "").strip():
             issues.append(LintIssue("warning", "empty_body", "Skill body is empty."))
@@ -130,9 +118,17 @@ class SkillLinter(SharedService):
         return issues
 
     @staticmethod
-    def _spec_issues(fm: dict[str, Any], skill_dir: Path | None) -> list[LintIssue]:
+    def _spec_issues(
+        fm: dict[str, Any],
+        skill_dir: Path | None,
+        *,
+        profile: ParseProfile = ParseProfile.PEON,
+    ) -> list[LintIssue]:
         issues: list[LintIssue] = []
-        for key in sorted(set(fm) - SPEC_FIELDS):
+        allowed_top = set(AGENTSKILLS_FIELDS)
+        if profile in {ParseProfile.CLAUDE_CODE, ParseProfile.PEON}:
+            allowed_top |= set(CLAUDE_EXTENSION_FIELDS)
+        for key in sorted(set(fm) - allowed_top):
             if key in METADATA_TOP_LEVEL_FIELDS:
                 hint = (
                     "Use `jobable` under `metadata:` instead of top-level `taskable`."
@@ -140,6 +136,14 @@ class SkillLinter(SharedService):
                     else f"Move `{key}` under `metadata:` (Peon SKILL.md format)."
                 )
                 issues.append(LintIssue("warning", "legacy_top_level", hint))
+            elif profile == ParseProfile.AGENTSKILLS:
+                issues.append(
+                    LintIssue(
+                        "warning",
+                        "unexpected_field",
+                        f"Unexpected top-level field `{key}` (agentskills profile).",
+                    )
+                )
             else:
                 issues.append(
                     LintIssue(
@@ -150,14 +154,27 @@ class SkillLinter(SharedService):
                 )
         name = fm.get("name")
         if name is None or not str(name).strip():
-            issues.append(LintIssue("error", "missing_name", "Missing required field: name"))
+            if profile == ParseProfile.CLAUDE_CODE and skill_dir is not None:
+                # Directory name is the default command name.
+                pass
+            else:
+                issues.append(
+                    LintIssue("error", "missing_name", "Missing required field: name")
+                )
         else:
-            issues.extend(SkillLinter._name_issues(str(name), skill_dir))
+            issues.extend(
+                SkillLinter._name_issues(str(name), skill_dir, profile=profile)
+            )
         desc = fm.get("description")
         if desc is None or not str(desc).strip():
-            issues.append(
-                LintIssue("error", "missing_description", "Missing required field: description")
-            )
+            if profile != ParseProfile.CLAUDE_CODE:
+                issues.append(
+                    LintIssue(
+                        "error",
+                        "missing_description",
+                        "Missing required field: description",
+                    )
+                )
         elif not isinstance(desc, str):
             issues.append(
                 LintIssue("warning", "description_type", "`description` should be a string.")
@@ -185,14 +202,24 @@ class SkillLinter(SharedService):
             )
         if fm.get("metadata") is not None and not isinstance(fm["metadata"], dict):
             issues.append(LintIssue("error", "metadata_type", "`metadata` must be a mapping"))
-        if fm.get("allowed-tools") is not None and not isinstance(fm["allowed-tools"], str):
+        tools = fm.get("allowed-tools")
+        if tools is not None and not isinstance(tools, (str, list, tuple)):
             issues.append(
-                LintIssue("error", "allowed_tools_type", "`allowed-tools` must be a string")
+                LintIssue(
+                    "error",
+                    "allowed_tools_type",
+                    "`allowed-tools` must be a string or list of strings",
+                )
             )
         return issues
 
     @staticmethod
-    def _name_issues(name: str, skill_dir: Path | None) -> list[LintIssue]:
+    def _name_issues(
+        name: str,
+        skill_dir: Path | None,
+        *,
+        profile: ParseProfile = ParseProfile.PEON,
+    ) -> list[LintIssue]:
         issues: list[LintIssue] = []
         name = unicodedata.normalize("NFKC", name.strip())
         if len(name) > MAX_NAME_LEN:
@@ -203,12 +230,29 @@ class SkillLinter(SharedService):
             )
         if not valid_skill_name(name):
             issues.append(LintIssue("error", "name_chars", f"Invalid skill name '{name}'."))
-        if skill_dir and unicodedata.normalize("NFKC", skill_dir.name) != name:
+        if (
+            profile == ParseProfile.PEON
+            and skill_dir
+            and unicodedata.normalize("NFKC", skill_dir.name) != name
+        ):
             issues.append(
                 LintIssue(
                     "error",
                     "name_dir_mismatch",
                     f"Directory '{skill_dir.name}' must match name '{name}'.",
+                )
+            )
+        elif (
+            profile != ParseProfile.PEON
+            and skill_dir
+            and unicodedata.normalize("NFKC", skill_dir.name) != name
+        ):
+            issues.append(
+                LintIssue(
+                    "warning",
+                    "name_dir_mismatch",
+                    f"Directory '{skill_dir.name}' differs from name '{name}' "
+                    "(allowed outside peon profile).",
                 )
             )
         return issues
@@ -238,12 +282,14 @@ class SkillLinter(SharedService):
                 )
         cat_raw = meta.get("category")
         if cat_raw is not None and str(cat_raw).strip():
-            if not normalize_category(cat_raw):
+            cat = normalize_category(cat_raw)
+            if cat not in {"builtin", "custom"}:
                 issues.append(
                     LintIssue(
                         "warning",
                         "category_slug",
-                        f"`metadata.category` should be a kebab-case slug (got {cat_raw!r}).",
+                        "`metadata.category` should be builtin or custom "
+                        f"(got {cat_raw!r}).",
                     )
                 )
         if "taskable" in meta:
@@ -256,13 +302,3 @@ class SkillLinter(SharedService):
             )
         return issues
 
-    @staticmethod
-    def lint_root(root: Path) -> list[dict[str, Any]]:
-        """Lint every skill directory under ``root`` that has a manifest."""
-        if not root.is_dir():
-            return []
-        return [
-            SkillLinter.lint_dir(child)
-            for child in sorted(root.iterdir())
-            if child.is_dir() and not child.name.startswith(".") and find_manifest(child)
-        ]

@@ -101,6 +101,60 @@ class InMemoryUsageSink:
         return sorted(totals.values(), key=lambda b: b["cost_usd"], reverse=True)
 
 
+class SqliteUsageSink:
+    """Default durable sink: rows in the platform SQLite DB (``LlmCallLog``), queryable via :meth:`summary`."""
+
+    def record(self, row: LlmUsageRecord) -> None:
+        import uuid
+
+        from orchestrator.memory.models import LlmCallLog
+
+        LlmCallLog(
+            id=uuid.uuid4().hex, purpose=row.purpose, model=row.model, ok=row.ok, project_id=row.project_id,
+            job_id=row.job_id, role_id=row.role_id, prompt_tokens=row.prompt_tokens,
+            completion_tokens=row.completion_tokens, total_tokens=row.total_tokens, cost_usd=row.cost_usd,
+            duration_ms=row.duration_ms, error=row.error, created_at=row.created_at.isoformat(),
+        ).save(force_insert=True)
+
+    def summary(self, *, since_hours: float = 24.0, project_id: str = "") -> list[dict[str, Any]]:
+        """Cost/tokens/call-count grouped by purpose, most expensive first."""
+        from datetime import timedelta
+
+        from orchestrator.memory.models import LlmCallLog
+
+        cutoff = (utcnow() - timedelta(hours=max(0.0, since_hours))).isoformat()
+        totals: dict[str, dict[str, Any]] = {}
+        for r in LlmCallLog.objects.all():
+            if r.created_at < cutoff or (project_id and r.project_id != project_id):
+                continue
+            b = totals.setdefault(r.purpose, {"purpose": r.purpose, "calls": 0, "failed": 0, "cost_usd": 0.0,
+                                              "prompt_tokens": 0, "completion_tokens": 0})
+            b["calls"] += 1
+            b["failed"] += 0 if r.ok else 1
+            b["cost_usd"] += float(r.cost_usd or 0)
+            b["prompt_tokens"] += int(r.prompt_tokens or 0)
+            b["completion_tokens"] += int(r.completion_tokens or 0)
+        return sorted(totals.values(), key=lambda b: b["cost_usd"], reverse=True)
+
+
+def enable() -> UsageSink:
+    """Register the default ``SqliteUsageSink`` (unless ``LLM_USAGE_ENABLED=false`` or a sink is already set)."""
+    from orchestrator import settings
+
+    if _sink is not None or not settings.get_bool("LLM_USAGE_ENABLED", True):
+        return _sink or InMemoryUsageSink()
+    sink = SqliteUsageSink()
+    register(sink)
+    return sink
+
+
+def summary(*, since_hours: float = 24.0, project_id: str = "") -> list[dict[str, Any]]:
+    """Usage grouped by purpose (from the registered sink; ``[]`` when none supports summaries)."""
+    sink = _sink
+    return sink.summary(since_hours=since_hours, project_id=project_id) if isinstance(sink, SqliteUsageSink) else (
+        sink.summary(since_hours=since_hours) if hasattr(sink, "summary") else [])
+
+
 @contextmanager
 def purpose(name: str) -> Iterator[None]:
     """Tag LLM calls made inside this block with ``name`` for cost reporting.
@@ -129,6 +183,49 @@ def _job_context() -> dict[str, str]:
         "project_id": JobEnv.get("ORCHESTRATOR_PROJECT_ID"),
         "role_id": JobEnv.get("ORCHESTRATOR_ROLE_ID"),
     }
+
+
+def record_crew_usage(llms: Any, *, model: str = "") -> int:
+    """Record the calls of CrewAI *native-provider* LLM objects (they bypass the LiteLLM callbacks).
+
+    Call after a kickoff, inside the job's ``bind_job`` / ``purpose`` blocks, with the agents' ``llm`` objects.
+    One row per request (tokens split evenly); LiteLLM-backed ``crewai.LLM`` objects are skipped — the callbacks
+    already recorded those. Returns the number of rows written.
+    """
+    ctx = _job_context()
+    seen: set[int] = set()
+    written = 0
+    for llm in llms or []:
+        if llm is None or isinstance(llm, str) or id(llm) in seen or not hasattr(llm, "get_token_usage_summary"):
+            continue
+        seen.add(id(llm))
+        if type(llm).__module__ == "crewai.llm":
+            continue
+        try:
+            u = llm.get_token_usage_summary()
+            n = int(getattr(u, "successful_requests", 0) or 0)
+            prompt, completion = int(u.prompt_tokens or 0), int(u.completion_tokens or 0)
+        except Exception:  # noqa: BLE001
+            continue
+        if n <= 0:
+            continue
+        name = str(getattr(llm, "model", "") or model)
+        try:
+            import litellm
+
+            p_cost, c_cost = litellm.cost_per_token(model=name, prompt_tokens=prompt, completion_tokens=completion)
+            cost = float(p_cost + c_cost)
+        except Exception:  # noqa: BLE001
+            cost = 0.0
+        for i in range(n):
+            share = lambda total: total // n + (total % n if i == 0 else 0)  # noqa: E731
+            _write(LlmUsageRecord(
+                purpose=current_purpose() or "unlabeled", model=name, ok=True,
+                project_id=ctx.get("project_id", "")[:36], job_id=ctx.get("job_id", "")[:36],
+                role_id=ctx.get("role_id", "")[:64], prompt_tokens=share(prompt), completion_tokens=share(completion),
+                total_tokens=share(prompt) + share(completion), cost_usd=cost / n))
+            written += 1
+    return written
 
 
 def _resolve_cost(kwargs: dict[str, Any], response: Any) -> float:

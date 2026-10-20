@@ -16,13 +16,13 @@ from typing import Any
 
 from orchestrator.brain.memory_backend import InMemoryMessageStore
 from orchestrator.brain.protocols import Message, MessageStore
-from orchestrator.utils.service import SharedService
+from orchestrator.utils.service import SharedServiceBase
 
 DEFAULT_MAX_MESSAGES_PER_PAIR = 40
 DEFAULT_MAX_RECIPIENTS = 5
 
 
-class A2AHub(SharedService):
+class A2AHub(SharedServiceBase):
     def __init__(
         self,
         *,
@@ -44,8 +44,10 @@ class A2AHub(SharedService):
         reply_to: str | None = None,
         metadata: dict[str, Any] | None = None,
         wake: Callable[[str], None] | None = None,
+        backstop: Callable[[str], None] | None = None,
     ) -> Message:
-        """Send one directed message. Raises ``ValueError`` on self-message
+        """Send one directed message. ``wake=None`` delivers silently; ``backstop`` (called then) may still wake
+        the recipient once enough silent messages have piled up (``A2A_INTERIM_WAKE_UNREAD``). Raises ``ValueError`` on self-message
         or a per-pair cap hit — never silently drops or broadcasts instead."""
         if not sender_job_id or not recipient_job_id:
             raise ValueError("sender_job_id and recipient_job_id are required")
@@ -70,6 +72,8 @@ class A2AHub(SharedService):
         )
         if wake is not None:
             wake(recipient_job_id)
+        elif backstop is not None:
+            backstop(recipient_job_id)
         return message
 
     def multisend(

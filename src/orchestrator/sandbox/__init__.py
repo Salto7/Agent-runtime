@@ -1,31 +1,5 @@
-"""Sandbox package — backends, Docker CLI, session binding, provisioner."""
+"""Sandbox shell helpers (backends live in ``agent_runtime``)."""
 
-from orchestrator.sandbox.backend import (
-    BaseCommandCache,
-    DOCKER_BOUND_MODES,
-    ExecResult,
-    SandboxBackend,
-    SandboxInfo,
-    UnboundSandbox,
-    require_docker_bound,
-    run_process,
-)
-from orchestrator.sandbox.cli import DockerCli
-from orchestrator.sandbox.docker import DockerSandbox
-from orchestrator.sandbox.provision import SandboxProvisioner
-from orchestrator.sandbox.session import SandboxSession
+from orchestrator.sandbox.shell import ProvisionService, ShellRunner
 
-__all__ = [
-    "BaseCommandCache",
-    "DOCKER_BOUND_MODES",
-    "DockerCli",
-    "DockerSandbox",
-    "ExecResult",
-    "SandboxBackend",
-    "SandboxInfo",
-    "SandboxProvisioner",
-    "SandboxSession",
-    "UnboundSandbox",
-    "require_docker_bound",
-    "run_process",
-]
+__all__ = ["ProvisionService", "ShellRunner"]

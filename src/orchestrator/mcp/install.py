@@ -1,10 +1,4 @@
-"""Install MCP servers from disk, git, or npx into a host-provided ``McpStore``.
-
-No network calls beyond ``git clone``/``npx`` themselves; nothing here starts
-the installed server. Callers that want persistence to disk (so a restart
-doesn't lose imported packs) pass ``mcps_dir``; without it, imports still work
-but only live in the ``McpStore``.
-"""
+"""Install MCP servers into the platform catalog from disk, git, or npx."""
 
 from __future__ import annotations
 
@@ -15,9 +9,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from orchestrator.mcp.parse import McpParseError, McpSpec, SKILL_NAME_RE, parse_mcp_document
-from orchestrator.mcp.store import InMemoryMcpStore, McpRecord, McpStore
-from orchestrator.utils.git_source import git_clone, normalize_git_source
+from orchestrator.config import get_config
+from orchestrator.mcp.parse import McpParseError, parse_mcp_document
+from orchestrator.skills.common import SKILL_NAME_RE
+from orchestrator.skills.install.sources import _git_clone, _normalize_git, _safe_dir
 from orchestrator.utils.install_skip import (
     copytree_ignore,
     public_manifest_name,
@@ -25,10 +20,9 @@ from orchestrator.utils.install_skip import (
     skip_rel_path,
 )
 from orchestrator.utils.paths import safe_join
-from orchestrator.utils.service import SharedService
 
 _PKG = re.compile(r"^(@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+$")
-# Standard / host-agnostic MCP manifests only.
+# Standard / host-agnostic MCP manifests only (no Peon-proprietary names).
 # Hidden ``.mcp.json`` may be read for discovery; installs persist as ``mcp.json``.
 _MANIFEST_NAMES = (
     "mcp.json",
@@ -46,328 +40,30 @@ _PYTHON_MCP_ENTRIES = (
 _GENERIC_PACK_DIR_NAMES = frozenset({"repo", "pack", "upload"})
 
 
-class McpInstaller(SharedService):
-    """Parses and persists MCP server packs into a ``McpStore``.
-
-    ``store`` defaults to an in-memory reference store; pass a real one (DB-
-    backed, file-backed, …) to make installs durable across restarts.
-    ``mcps_dir``, if given, also copies each installed pack's files to
-    ``mcps_dir/<mcp_id>/`` so ``refresh_root()`` can re-import after a restart
-    even if the store itself was wiped.
-    """
-
-    def __init__(self, *, store: McpStore | None = None, mcps_dir: Path | None = None) -> None:
-        self._store = store or InMemoryMcpStore()
-        self._mcps_dir = Path(mcps_dir).resolve() if mcps_dir else None
-
-    def install_source(self, kind: str, value: str, *, revision: str = "") -> list[str]:
-        """Create catalog MCP rows. ``kind`` is disk | git | npx."""
-        mode = str(kind or "").strip().lower()
-        raw = str(value or "").strip()
-        if not raw:
-            raise ValueError("source value is required")
-        if mode == "disk":
-            path = Path(raw).expanduser()
-            if path.is_file():
-                return self._from_disk(path.resolve(), persist=True)
-            return self._from_disk(_safe_dir(raw), persist=True)
-        if mode == "git":
-            return self._from_git(raw, revision=revision)
-        if mode == "npx":
-            return [self._from_npx(raw)]
-        raise ValueError("kind must be disk, git, or npx")
-
-    def install_relative_files(
-        self,
-        files: list[tuple[str, bytes]],
-        *,
-        origin: str = "drop",
-    ) -> list[str]:
-        """Rebuild a dropped folder from ``(relative path, bytes)`` pairs.
-
-        Hidden files are skipped (``.env``, …). ``.mcp.json`` is accepted only as a
-        source manifest and stored as ``mcp.json``. Browsers often omit ``.mcp.json``;
-        a pack with ``mcp_server.py`` is still inferred as stdio.
-        """
-        if not files:
-            raise ValueError("no files")
-        with tempfile.TemporaryDirectory(prefix="mcp-drop-") as tmp:
-            root = Path(tmp)
-            kept = 0
-            for rel, payload in files:
-                mapped = _mcp_upload_rel(rel)
-                if mapped is None:
-                    continue
-                target = safe_join(root, mapped)
-                if target is None:
-                    raise ValueError(f"unsafe path {rel!r}")
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(payload)
-                kept += 1
-            if not kept:
-                raise ValueError(
-                    "upload contained only ignored / hidden paths "
-                    "(.env, .venv, …). Browsers hide ``.mcp.json`` — add ``mcp.json`` "
-                    "or include ``mcp_server.py``."
-                )
-            return self._from_disk(_unwrap_upload_root(root), origin=origin, persist=True)
-
-    def refresh_root(self, root: Path) -> list[str]:
-        """Re-import every MCP pack under ``root`` (e.g. ``mcps_dir``)."""
-        base = Path(root)
-        if not base.is_dir():
-            return []
-        ids: list[str] = []
-        try:
-            children = sorted(base.iterdir())
-        except OSError as exc:
-            raise ValueError(f"could not list {base}: {exc}") from exc
-        for child in children:
-            if not child.is_dir() or child.name.startswith("."):
-                continue
-            try:
-                ids.extend(
-                    self._from_disk(child, origin=f"refresh:{child.name}", persist=False)
-                )
-            except ValueError:
-                continue
-        return ids
-
-    # -- persistence -----------------------------------------------------
-
-    def _persist_pack(self, source: Path, mcp_id: str) -> Path | None:
-        """Copy a pack into ``mcps_dir/<id>/``. Hidden paths are omitted. No-op without ``mcps_dir``."""
-        if self._mcps_dir is None:
-            return None
-        self._mcps_dir.mkdir(parents=True, exist_ok=True)
-        dest = self._mcps_dir / mcp_id
-        if dest.exists():
-            shutil.rmtree(dest)
-        if source.is_file():
-            dest.mkdir(parents=True, exist_ok=True)
-            # Store discovery manifests under a non-hidden name for refresh.
-            shutil.copy2(source, dest / public_manifest_name(source.name))
-            return dest
-        shutil.copytree(source, dest, ignore=copytree_ignore(skip_hidden=True), symlinks=False)
-        return dest
-
-    def _write_public_manifest(self, source_root: Path, mcp_id: str) -> None:
-        """Ensure ``mcps_dir/<id>/mcp.json`` exists after an inferred install (refresh-safe)."""
-        if self._mcps_dir is None:
-            return
-        dest = self._mcps_dir / mcp_id
-        if not dest.is_dir():
-            return
-        public = dest / "mcp.json"
-        if public.is_file():
-            return
-        # Prefer a host ``.mcp.json`` if the install came from a real disk path.
-        for name in (".mcp.json", "mcp.json"):
-            candidate = Path(source_root) / name
-            if candidate.is_file():
-                try:
-                    public.write_text(candidate.read_text(encoding="utf-8"), encoding="utf-8")
-                except OSError:
-                    return
-                return
-        # Synthetic manifest matching the inferred stdio shape.
-        entry = next((n for n in _PYTHON_MCP_ENTRIES if (dest / n).is_file()), "mcp_server.py")
-        payload = {
-            "name": mcp_id,
-            "description": f"stdio MCP ({entry})",
-            "transport": "stdio",
-            "command": "python",
-            "args": [entry],
-            "env_schema": [],
-        }
-        if (dest / "pyproject.toml").is_file():
-            payload["install"] = {"kind": "uv", "manifest": "pyproject.toml"}
-        elif (dest / "requirements.txt").is_file():
-            payload["install"] = {"kind": "pip", "manifest": "requirements.txt"}
-        try:
-            public.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        except OSError:
-            return
-
-    # -- source handlers ---------------------------------------------------
-
-    def _from_npx(self, package: str) -> str:
-        pkg = str(package or "").strip()
-        if not pkg or any(ch in pkg for ch in "\n\r\x00 ") or not _PKG.match(pkg):
-            raise ValueError("npx package must look like name or @scope/name (no spaces)")
-        mcp_id = _slug_from_package(pkg)
-        document = {
-            "name": mcp_id,
-            "description": f"MCP server installed from npx package {pkg}",
-            "transport": "stdio",
-            "command": "npx",
-            "args": ["-y", pkg],
-            "env_schema": [],
-        }
-        return self._upsert(document, files=None)
-
-    def _from_git(self, source: str, *, revision: str = "") -> list[str]:
-        origin = normalize_git_source(source)
-        with tempfile.TemporaryDirectory(prefix="mcp-git-") as tmp:
-            dest = Path(tmp) / "repo"
-            git_clone(origin, dest, revision=revision)
-            return self._from_disk(dest, origin=f"git:{origin}", persist=True)
-
-    def _from_disk(self, path: Path, *, origin: str = "", persist: bool = False) -> list[str]:
-        target = Path(path).expanduser().resolve()
-        if target.is_file():
-            ids = self._upsert_file(target, origin=origin or f"disk:{target}")
-            if persist and ids:
-                self._persist_pack(target, ids[0])
-            return ids
-        if not target.is_dir():
-            raise ValueError(f"not a file or directory: {target}")
-        manifests = _find_manifests(target)
-        if manifests:
-            ids: list[str] = []
-            for item in manifests:
-                pack_ids = self._upsert_file(item, origin=origin or f"disk:{target}")
-                ids.extend(pack_ids)
-                if persist and pack_ids:
-                    # Persist the pack directory that owns the manifest.
-                    self._persist_pack(item.parent, pack_ids[0])
-            return ids
-        package = target / "package.json"
-        if package.is_file():
-            mid = self._from_npm_package(target, origin=origin or f"disk:{target}")
-            if persist:
-                self._persist_pack(target, mid)
-            return [mid]
-        inferred = self._from_python_stdio_pack(target, origin=origin or f"disk:{target}")
-        if inferred:
-            if persist:
-                self._persist_pack(target, inferred)
-                self._write_public_manifest(target, inferred)
-            return [inferred]
-        raise ValueError(
-            "directory has no mcp.json / package.json to import. "
-            "Browsers do not upload hidden files — a host-only ``.mcp.json`` is invisible "
-            "to the folder picker; add a non-hidden ``mcp.json`` or keep ``mcp_server.py`` "
-            "so it can be inferred as a stdio server."
-        )
-
-    def _upsert_file(self, path: Path, *, origin: str = "") -> list[str]:
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise ValueError(f"could not read {path}: {exc}") from exc
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"{path.name} is not JSON: {exc}") from exc
-        sibling = (_collect_text_tree(path.parent) or None) if path.parent.is_dir() else None
-        if isinstance(data, dict) and "mcpServers" in data:
-            ids = []
-            for name, body in (data.get("mcpServers") or {}).items():
-                if not isinstance(body, dict):
-                    continue
-                merged = dict(body)
-                merged.setdefault("name", name)
-                if origin and not merged.get("description"):
-                    merged["description"] = f"Imported from {origin}"
-                ids.append(self._upsert(merged, files=sibling))
-            if not ids:
-                raise ValueError("mcpServers map is empty")
-            return ids
-        if isinstance(data, dict):
-            if origin and not data.get("description"):
-                data = {**data, "description": f"Imported from {origin}"}
-            return [self._upsert(data, files=sibling)]
-        raise ValueError(f"{path.name} must be an MCP server object or mcpServers map")
-
-    def _from_python_stdio_pack(self, root: Path, *, origin: str = "") -> str | None:
-        """Infer a stdio MCP when the folder picker omitted hidden ``.mcp.json``."""
-        entry = ""
-        for name in _PYTHON_MCP_ENTRIES:
-            if (root / name).is_file():
-                entry = name
-                break
-        if not entry:
-            return None
-        mcp_id = _inferred_mcp_id(root, entry, origin=origin)
-        files = _collect_text_tree(root)
-        document = {
-            "name": mcp_id,
-            "description": (
-                f"Imported from {origin}" if origin else f"stdio MCP inferred from {mcp_id} ({entry})"
-            ),
-            "transport": "stdio",
-            "command": "python",
-            "args": [entry],
-            "env_schema": [],
-        }
-        if "pyproject.toml" in files:
-            # Prefer uv for pyproject (build backends, editable installs).
-            document["install"] = {"kind": "uv", "manifest": "pyproject.toml"}
-        elif "requirements.txt" in files:
-            document["install"] = {"kind": "pip", "manifest": "requirements.txt"}
-        return self._upsert(document, files=files)
-
-    def _from_npm_package(self, root: Path, *, origin: str = "") -> str:
-        package = root / "package.json"
-        try:
-            data = json.loads(package.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ValueError(f"invalid package.json: {exc}") from exc
-        if not isinstance(data, dict):
-            raise ValueError("package.json must be an object")
-        name = _slug_from_package(str(data.get("name") or root.name))
-        description = str(data.get("description") or "").strip() or (
-            f"MCP server from {origin or root.name}"
-        )
-        command, args = _npm_entry(data)
-        files = _collect_text_tree(root)
-        document = {
-            "name": name,
-            "description": description,
-            "transport": "stdio",
-            "command": command,
-            "args": list(args),
-            "install": {"kind": "npm", "manifest": "package.json"},
-            "env_schema": [],
-        }
-        return self._upsert(document, files=files)
-
-    def _upsert(self, document: dict[str, Any], *, files: dict[str, str] | None) -> str:
-        # Validate before touching the store.
-        normalized = _normalize_import(document)
-        try:
-            specs = parse_mcp_document(normalized)
-        except McpParseError as exc:
-            raise ValueError(str(exc)) from exc
-        if len(specs) != 1:
-            raise ValueError("install accepts one MCP server at a time")
-        record = _record_from_spec(specs[0], files=files or {})
-        saved = self._store.upsert_mcp(record)
-        return saved.mcp_id
 
 
-def _record_from_spec(spec: McpSpec, *, files: dict[str, str]) -> McpRecord:
-    return McpRecord(
-        mcp_id=spec.mcp_id,
-        description=spec.description,
-        transport=spec.transport,
-        command=spec.command,
-        args=spec.args,
-        cwd=spec.cwd,
-        install=spec.install,
-        env_schema_full=spec.env_schema_full,
-        reference_hosts=spec.reference_hosts,
-        files=files,
-    )
 
 
-def _safe_dir(raw: str) -> Path:
-    path = Path(raw).expanduser().resolve()
-    if not path.is_dir():
-        raise ValueError(f"not a directory: {path}")
-    return path
 
+
+
+
+def install_mcp_source(kind: str, value: str, *, revision: str = "") -> list[str]:
+    """Create catalog MCP rows. ``kind`` is disk | git | npx."""
+    mode = str(kind or "").strip().lower()
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("source value is required")
+    if mode == "disk":
+        path = Path(raw).expanduser()
+        if path.is_file():
+            return _from_disk(path.resolve(), persist=True)
+        return _from_disk(_safe_dir(raw), persist=True)
+    if mode == "git":
+        return _from_git(raw, revision=revision)
+    if mode == "npx":
+        return [_from_npx(raw)]
+    raise ValueError("kind must be disk, git, or npx")
 
 def _mcp_upload_rel(rel: str) -> str | None:
     """Drop hidden upload paths; rewrite ``.mcp.json`` → ``mcp.json``."""
@@ -391,7 +87,6 @@ def _mcp_upload_rel(rel: str) -> str | None:
         return None
     return rewritten
 
-
 def _unwrap_upload_root(root: Path) -> Path:
     """If the upload is ``FolderName/…`` only, treat ``FolderName`` as the pack root."""
     try:
@@ -402,6 +97,181 @@ def _unwrap_upload_root(root: Path) -> Path:
     if len(visible) == 1 and visible[0].is_dir():
         return visible[0]
     return root
+
+def install_mcp_relative_files(
+    files: list[tuple[str, bytes]],
+    *,
+    origin: str = "drop",
+) -> list[str]:
+    """Rebuild a dropped folder from ``(relative path, bytes)`` pairs.
+
+    Hidden files are skipped (``.env``, …). ``.mcp.json`` is accepted only as a
+    source manifest and stored as ``mcp.json``. Browsers often omit ``.mcp.json``;
+    a pack with ``mcp_server.py`` is still inferred as stdio.
+    """
+    if not files:
+        raise ValueError("no files")
+    with tempfile.TemporaryDirectory(prefix="orchestrator-mcp-drop-") as tmp:
+        root = Path(tmp)
+        kept = 0
+        for rel, payload in files:
+            mapped = _mcp_upload_rel(rel)
+            if mapped is None:
+                continue
+            target = safe_join(root, mapped)
+            if target is None:
+                raise ValueError(f"unsafe path {rel!r}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(payload)
+            kept += 1
+        if not kept:
+            raise ValueError(
+                "upload contained only ignored / hidden paths "
+                "(.env, .venv, …). Browsers hide ``.mcp.json`` — add ``mcp.json`` "
+                "or include ``mcp_server.py``."
+            )
+        return _from_disk(_unwrap_upload_root(root), origin=origin, persist=True)
+
+def refresh_mcp_root(root: Path, *, keep_bindings: bool = True) -> list[str]:
+    """Re-import every MCP pack under ``mcps/`` (or another root)."""
+    base = Path(root)
+    if not base.is_dir():
+        return []
+    ids: list[str] = []
+    try:
+        children = sorted(base.iterdir())
+    except OSError as exc:
+        raise ValueError(f"could not list {base}: {exc}") from exc
+    for child in children:
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        try:
+            ids.extend(
+                _from_disk(
+                    child,
+                    origin=f"refresh:{child.name}",
+                    persist=False,
+                    keep_bindings=keep_bindings,
+                )
+            )
+        except ValueError:
+            continue
+    return ids
+
+
+def _mcps_dir() -> Path:
+    root = Path(get_config().mcps_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _persist_pack(source: Path, mcp_id: str) -> Path:
+    """Copy a pack into ``mcps/<id>/``. Hidden paths (``.env``, ``.mcp.json``, …) are omitted."""
+    dest = _mcps_dir() / mcp_id
+    if source.resolve() == dest.resolve():
+        return dest   # already in place
+    if dest.exists():
+        shutil.rmtree(dest)
+    if source.is_file():
+        dest.mkdir(parents=True, exist_ok=True)
+        # Store discovery manifests under a non-hidden name for refresh.
+        shutil.copy2(source, dest / public_manifest_name(source.name))
+        return dest
+    shutil.copytree(
+        source,
+        dest,
+        ignore=copytree_ignore(skip_hidden=True),
+        symlinks=False,
+    )
+    return dest
+
+
+
+
+def _from_npx(package: str) -> str:
+    pkg = str(package or "").strip()
+    if not pkg or any(ch in pkg for ch in "\n\r\x00 ") or not _PKG.match(pkg):
+        raise ValueError(
+            "npx package must look like name or @scope/name (no spaces)"
+        )
+    mcp_id = _slug_from_package(pkg)
+    document = {
+        "name": mcp_id,
+        "description": f"MCP server installed from npx package {pkg}",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", pkg],
+        "env_schema": [],
+    }
+    return _upsert(document, files=None)
+
+def _from_git(source: str, *, revision: str = "") -> list[str]:
+    origin = _normalize_git(source)
+    with tempfile.TemporaryDirectory(prefix="orchestrator-mcp-git-") as tmp:
+        dest = Path(tmp) / "repo"
+        _git_clone(origin, dest, revision=revision)
+        return _from_disk(dest, origin=f"git:{origin}", persist=True)
+
+
+def _from_disk(
+    path: Path,
+    *,
+    origin: str = "",
+    persist: bool = False,
+    keep_bindings: bool = False,
+) -> list[str]:
+    target = Path(path).expanduser().resolve()
+    if target.is_file():
+        ids = _upsert_file(
+            target,
+            origin=origin or f"disk:{target}",
+            keep_bindings=keep_bindings,
+        )
+        if persist and ids:
+            _persist_pack(target, ids[0])
+        return ids
+    if not target.is_dir():
+        raise ValueError(f"not a file or directory: {target}")
+    manifests = _find_manifests(target)
+    if manifests:
+        ids: list[str] = []
+        for item in manifests:
+            pack_ids = _upsert_file(
+                item,
+                origin=origin or f"disk:{target}",
+                keep_bindings=keep_bindings,
+            )
+            ids.extend(pack_ids)
+            if persist and pack_ids:
+                # Persist the pack directory that owns the manifest.
+                _persist_pack(item.parent, pack_ids[0])
+        return ids
+    package = target / "package.json"
+    if package.is_file():
+        mid = _from_npm_package(
+            target,
+            origin=origin or f"disk:{target}",
+            keep_bindings=keep_bindings,
+        )
+        if persist:
+            _persist_pack(target, mid)
+        return [mid]
+    inferred = _from_python_stdio_pack(
+        target,
+        origin=origin or f"disk:{target}",
+        keep_bindings=keep_bindings,
+    )
+    if inferred:
+        if persist:
+            _persist_pack(target, inferred)
+            _write_public_manifest(target, inferred)
+        return [inferred]
+    raise ValueError(
+        "directory has no mcp.json / package.json to import. "
+        "Browsers do not upload hidden files — a host-only ``.mcp.json`` is invisible "
+        "to the folder picker; add a non-hidden ``mcp.json`` or keep ``mcp_server.py`` "
+        "so Peon can infer a stdio server."
+    )
 
 
 def _find_manifests(root: Path) -> list[Path]:
@@ -433,6 +303,42 @@ def _find_manifests(root: Path) -> list[Path]:
     return found
 
 
+def _upsert_file(
+    path: Path, *, origin: str = "", keep_bindings: bool = False
+) -> list[str]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"could not read {path}: {exc}") from exc
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path.name} is not JSON: {exc}") from exc
+    sibling = (
+        (_collect_text_tree(path.parent) or None) if path.parent.is_dir() else None
+    )
+    if isinstance(data, dict) and "mcpServers" in data:
+        ids = []
+        for name, body in (data.get("mcpServers") or {}).items():
+            if not isinstance(body, dict):
+                continue
+            merged = dict(body)
+            merged.setdefault("name", name)
+            if origin and not merged.get("description"):
+                merged["description"] = f"Imported from {origin}"
+            ids.append(
+                _upsert(merged, files=sibling, keep_bindings=keep_bindings)
+            )
+        if not ids:
+            raise ValueError("mcpServers map is empty")
+        return ids
+    if isinstance(data, dict):
+        if origin and not data.get("description"):
+            data = {**data, "description": f"Imported from {origin}"}
+        return [_upsert(data, files=sibling, keep_bindings=keep_bindings)]
+    raise ValueError(f"{path.name} must be an MCP server object or mcpServers map")
+
+
 def _repo_name_from_origin(origin: str) -> str:
     """Repo/package name from an origin label like ``git:https://host/owner/repo.git``."""
     text = str(origin or "").strip()
@@ -447,16 +353,16 @@ def _repo_name_from_origin(origin: str) -> str:
 def _inferred_mcp_id(root: Path, entry: str, *, origin: str = "") -> str:
     """Prefer a real pack/package name over temp clone/upload directory names.
 
-    A git clone always lands at ``.../repo`` and an upload at
-    ``mcp-drop-<random>`` — neither says anything about the actual package, so
-    both fall through to ``origin`` (the git URL) or the package/entry-name
-    heuristics below.
+    A git clone always lands at ``.../repo`` (see ``_from_git``) and an
+    upload at ``orchestrator-mcp-drop-<random>`` — neither says anything about the
+    actual package, so both fall through to ``origin`` (the git URL) or the
+    package/entry-name heuristics below.
     """
     base = Path(root)
     name = base.name
     if (
         name not in _GENERIC_PACK_DIR_NAMES
-        and not name.startswith("mcp-drop-")
+        and not name.startswith("orchestrator-mcp-")
         and not name.startswith("tmp")
     ):
         return _slug_from_package(name)
@@ -476,6 +382,104 @@ def _inferred_mcp_id(root: Path, entry: str, *, origin: str = "") -> str:
     return _slug_from_package(stem or name)
 
 
+def _from_python_stdio_pack(
+    root: Path, *, origin: str = "", keep_bindings: bool = False
+) -> str | None:
+    """Infer a stdio MCP when the folder picker omitted hidden ``.mcp.json``."""
+    entry = ""
+    for name in _PYTHON_MCP_ENTRIES:
+        if (root / name).is_file():
+            entry = name
+            break
+    if not entry:
+        return None
+    mcp_id = _inferred_mcp_id(root, entry, origin=origin)
+    files = _collect_text_tree(root)
+    document = {
+        "name": mcp_id,
+        "description": (
+            f"Imported from {origin}"
+            if origin
+            else f"stdio MCP inferred from {mcp_id} ({entry})"
+        ),
+        "transport": "stdio",
+        "command": "python",
+        "args": [entry],
+        "env_schema": [],
+    }
+    if "pyproject.toml" in files:
+        # Prefer uv for pyproject (build backends, editable installs).
+        document["install"] = {"kind": "uv", "manifest": "pyproject.toml"}
+    elif "requirements.txt" in files:
+        document["install"] = {"kind": "pip", "manifest": "requirements.txt"}
+    return _upsert(document, files=files, keep_bindings=keep_bindings)
+
+
+def _write_public_manifest(source_root: Path, mcp_id: str) -> None:
+    """Ensure ``mcps/<id>/mcp.json`` exists after an inferred install (refresh-safe)."""
+    dest = _mcps_dir() / mcp_id
+    if not dest.is_dir():
+        return
+    public = dest / "mcp.json"
+    if public.is_file():
+        return
+    # Prefer a host ``.mcp.json`` if the install came from a real disk path.
+    for name in (".mcp.json", "mcp.json"):
+        candidate = Path(source_root) / name
+        if candidate.is_file():
+            try:
+                public.write_text(candidate.read_text(encoding="utf-8"), encoding="utf-8")
+            except OSError:
+                return
+            return
+    # Synthetic manifest matching the inferred stdio shape.
+    entry = next((n for n in _PYTHON_MCP_ENTRIES if (dest / n).is_file()), "mcp_server.py")
+    payload = {
+        "name": mcp_id,
+        "description": f"stdio MCP ({entry})",
+        "transport": "stdio",
+        "command": "python",
+        "args": [entry],
+        "env_schema": [],
+    }
+    if (dest / "pyproject.toml").is_file():
+        payload["install"] = {"kind": "uv", "manifest": "pyproject.toml"}
+    elif (dest / "requirements.txt").is_file():
+        payload["install"] = {"kind": "pip", "manifest": "requirements.txt"}
+    try:
+        public.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        return
+
+
+def _from_npm_package(
+    root: Path, *, origin: str = "", keep_bindings: bool = False
+) -> str:
+    package = root / "package.json"
+    try:
+        data = json.loads(package.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid package.json: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("package.json must be an object")
+    name = _slug_from_package(str(data.get("name") or root.name))
+    description = str(data.get("description") or "").strip() or (
+        f"MCP server from {origin or root.name}"
+    )
+    command, args = _npm_entry(data)
+    files = _collect_text_tree(root)
+    document = {
+        "name": name,
+        "description": description,
+        "transport": "stdio",
+        "command": command,
+        "args": list(args),
+        "install": {"kind": "npm", "manifest": "package.json"},
+        "env_schema": [],
+    }
+    return _upsert(document, files=files, keep_bindings=keep_bindings)
+
+
 def _npm_entry(data: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
     """Prefer a published bin name; fall back to ``node <main>``."""
     raw = data.get("bin")
@@ -483,7 +487,7 @@ def _npm_entry(data: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
         rel = raw.strip().replace("\\", "/")
         base = Path(rel).name
         if "." in base:
-            return "node", (rel.lstrip("./"),)
+            return "node", (rel.removeprefix("./"),)
         return base, ()
     if isinstance(raw, dict):
         for key, value in raw.items():
@@ -511,7 +515,7 @@ def _collect_text_tree(root: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     base = Path(root)
     for path in sorted(base.rglob("*")):
-        if not path.is_file():
+        if not path.is_file() or path.is_symlink():   # never follow links out of the pack
             continue
         rel = path.relative_to(base).as_posix()
         if skip_rel_path(rel, skip_hidden=True):
@@ -526,7 +530,7 @@ def _collect_text_tree(root: Path) -> dict[str, str]:
 
 
 def _normalize_import(document: dict[str, Any]) -> dict[str, Any]:
-    """Adapt Claude Desktop / host configs to this sandbox's catalog shape."""
+    """Adapt Claude Desktop / host configs to Peon sandbox catalog shape."""
     out = dict(document)
     command = out.get("command")
     if isinstance(command, list) and command:
@@ -555,7 +559,7 @@ def _normalize_import(document: dict[str, Any]) -> dict[str, Any]:
             out["command"] = Path(text).name
     env = out.get("env")
     if isinstance(env, dict):
-        # Catalog stores names only — values belong on the caller's side.
+        # Catalog stores names only — values belong on the project.
         schema = out.get("env_schema")
         if not schema:
             out["env_schema"] = [
@@ -565,3 +569,28 @@ def _normalize_import(document: dict[str, Any]) -> dict[str, Any]:
             ]
         out.pop("env", None)
     return out
+
+
+def _upsert(
+    document: dict[str, Any],
+    *,
+    files: dict[str, str] | None,
+    keep_bindings: bool = False,
+) -> str:
+    # Validate before touching the DB.
+    normalized = _normalize_import(document)
+    try:
+        specs = parse_mcp_document(normalized)
+    except McpParseError as exc:
+        raise ValueError(str(exc)) from exc
+    if len(specs) != 1:
+        raise ValueError("install accepts one MCP server at a time")
+    from orchestrator.catalog import PlatformCatalog
+
+    rec = PlatformCatalog.shared().upsert_mcp(
+        normalized,
+        files=files,
+        bindings=None,
+        keep_bindings=keep_bindings,
+    )
+    return rec.mcp_id
