@@ -1,4 +1,4 @@
-"""Provision-time Peon SKILL.md checks (agentskills layout + product metadata).
+"""Provision-time SKILL.md checks (agentskills layout + product metadata).
 
 Required: ``SKILL.md`` with YAML frontmatter ``name`` + ``description``, and
 directory name matching ``name``. Optional resource roots (``scripts/``,
@@ -29,13 +29,13 @@ from orchestrator.skills.common import (
 from orchestrator.skills.manifest import (
     AGENTSKILLS_FIELDS,
     CLAUDE_EXTENSION_FIELDS,
-    PEON_META_FIELDS,
+    META_FIELDS,
     ParseProfile,
 )
 from orchestrator.utils.service import SharedServiceBase
 
-# Product fields that belong under ``metadata:`` (Peon layout), not top-level.
-METADATA_TOP_LEVEL_FIELDS = PEON_META_FIELDS
+# Product fields that belong under ``metadata:`` (native layout), not top-level.
+METADATA_TOP_LEVEL_FIELDS = META_FIELDS
 
 
 class SkillLinter(SharedServiceBase):
@@ -104,7 +104,7 @@ class SkillLinter(SharedServiceBase):
         issues = SkillLinter._spec_issues(
             data,
             skill_dir,
-            profile=ParseProfile.PEON,
+            profile=ParseProfile.NATIVE,
         )
         issues.extend(SkillLinter._meta_issues(data.get("metadata") or {}))
         if not (body or "").strip():
@@ -122,18 +122,18 @@ class SkillLinter(SharedServiceBase):
         fm: dict[str, Any],
         skill_dir: Path | None,
         *,
-        profile: ParseProfile = ParseProfile.PEON,
+        profile: ParseProfile = ParseProfile.NATIVE,
     ) -> list[LintIssue]:
         issues: list[LintIssue] = []
         allowed_top = set(AGENTSKILLS_FIELDS)
-        if profile in {ParseProfile.CLAUDE_CODE, ParseProfile.PEON}:
+        if profile in {ParseProfile.CLAUDE_CODE, ParseProfile.NATIVE}:
             allowed_top |= set(CLAUDE_EXTENSION_FIELDS)
         for key in sorted(set(fm) - allowed_top):
             if key in METADATA_TOP_LEVEL_FIELDS:
                 hint = (
                     "Use `jobable` under `metadata:` instead of top-level `taskable`."
                     if key == "taskable"
-                    else f"Move `{key}` under `metadata:` (Peon SKILL.md format)."
+                    else f"Move `{key}` under `metadata:` (SKILL.md format)."
                 )
                 issues.append(LintIssue("warning", "legacy_top_level", hint))
             elif profile == ParseProfile.AGENTSKILLS:
@@ -218,7 +218,7 @@ class SkillLinter(SharedServiceBase):
         name: str,
         skill_dir: Path | None,
         *,
-        profile: ParseProfile = ParseProfile.PEON,
+        profile: ParseProfile = ParseProfile.NATIVE,
     ) -> list[LintIssue]:
         issues: list[LintIssue] = []
         name = unicodedata.normalize("NFKC", name.strip())
@@ -231,7 +231,7 @@ class SkillLinter(SharedServiceBase):
         if not valid_skill_name(name):
             issues.append(LintIssue("error", "name_chars", f"Invalid skill name '{name}'."))
         if (
-            profile == ParseProfile.PEON
+            profile == ParseProfile.NATIVE
             and skill_dir
             and unicodedata.normalize("NFKC", skill_dir.name) != name
         ):
@@ -243,7 +243,7 @@ class SkillLinter(SharedServiceBase):
                 )
             )
         elif (
-            profile != ParseProfile.PEON
+            profile != ParseProfile.NATIVE
             and skill_dir
             and unicodedata.normalize("NFKC", skill_dir.name) != name
         ):
@@ -252,7 +252,7 @@ class SkillLinter(SharedServiceBase):
                     "warning",
                     "name_dir_mismatch",
                     f"Directory '{skill_dir.name}' differs from name '{name}' "
-                    "(allowed outside peon profile).",
+                    "(allowed outside native profile).",
                 )
             )
         return issues

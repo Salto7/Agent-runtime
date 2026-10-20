@@ -374,6 +374,11 @@ class Model:
         pk = cls.pk_fields
         extra = f", PRIMARY KEY ({', '.join(pk)})" if pk else ""
         conn.execute(f"CREATE TABLE IF NOT EXISTS {cls._table} ({', '.join(cols)}{extra})")
+        cls._migrate(conn)
+
+    @classmethod
+    def _migrate(cls, conn: sqlite3.Connection) -> None:
+        """Hook: bring rows written by an older version up to date (runs whenever the table is opened)."""
 
     @classmethod
     def _to_db(cls, name: str, value: Any) -> Any:

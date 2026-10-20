@@ -62,7 +62,7 @@ class RoleSpec:
 
 
 def llm_id_for_crew() -> str:
-    """Map Peon LiteLLM model id into a CrewAI-friendly llm string."""
+    """Map the platform LiteLLM model id into a CrewAI-friendly llm string."""
     cfg = get_config()
     model = (cfg.litellm_model or "").strip()
     return model or "openrouter/openai/gpt-5.6-luna"
@@ -159,7 +159,7 @@ def build_crew_agent(
             "and directing workers, not by running the scan/probe yourself. "
             f"{solo_rule}"
             "Out-of-lane work, unknown roles, "
-            "or RoE ambiguity: `list_roles` then spawn another catalog role, or "
+            "or scope rules ambiguity: `list_roles` then spawn another catalog role, or "
             "`ask_operator`. Never invent role or skill ids."
             "\n\n## Working with the other agents\n"
             "Every planned agent already exists; ones waiting on dependencies are "

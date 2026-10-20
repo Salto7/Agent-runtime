@@ -14,7 +14,7 @@ _NETWORK_HINT = frozenset({"domain", "url", "ip", "host", "fqdn", "netblock", "c
 
 
 def _coerce_target_list(raw) -> list[dict]:
-    """Local coerce — skills must not import peon. Type is hint; one row per value."""
+    """Local coerce — skills must not import the orchestrator. Type is hint; one row per value."""
     by_value: dict[str, dict] = {}
     order: list[str] = []
     if not isinstance(raw, list):

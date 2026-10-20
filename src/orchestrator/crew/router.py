@@ -24,7 +24,7 @@ def _project_manager_prompt() -> str:
 
 
 class RoleRouter(SharedServiceBase):
-    """Resolve role ids using Peon catalog; LLM guided by the manager role's skill."""
+    """Resolve role ids using the platform catalog; LLM guided by the manager role's skill."""
 
     def resolve(
         self,
@@ -143,7 +143,7 @@ class RoleRouter(SharedServiceBase):
             lines = [
                 "Roles group skills (platform role store). Assign role_id; "
                 "agent loads role.skills.",
-                "Spawn is a Peon capability on technical / engagement-pm agents.",
+                "Spawn is a capability on technical / engagement-pm agents.",
             ]
             if mgr:
                 lines.append(f"Engagement manager id: `{mgr.id}`.")

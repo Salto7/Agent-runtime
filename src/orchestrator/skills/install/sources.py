@@ -44,7 +44,7 @@ def _safe_dir(raw: str) -> Path:
 
 def _install_git(source: str, *, revision: str = "") -> list[str]:
     origin = _normalize_git(source)
-    with tempfile.TemporaryDirectory(prefix="peon-skill-git-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="orchestrator-skill-git-") as tmp:
         dest = Path(tmp) / "repo"
         _git_clone(origin, dest, revision=revision)
         return install_directory(dest, origin=f"git:{origin}")

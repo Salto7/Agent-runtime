@@ -1,6 +1,6 @@
 """Claude Agent Skills under an import / extra root (or ``skills/`` packs).
 
-Packs share the ``skills/`` tree with Peon. Classification uses structured
+Packs share the ``skills/`` tree with the platform. Classification uses structured
 signals; this provider defaults ambiguous packs to ``claude``.
 """
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """In-sandbox MCP supervisor (official mcp SDK client).
 
-Shipped with Peon and baked into the sandbox image at
+Shipped with the library and baked into the sandbox image at
 ``/opt/orchestrator-mcp/supervisor.py``. The worker launches this file with the
 image MCP client venv; it is a normal Python module (not an embedded string).
 
@@ -54,9 +54,9 @@ def _bounded_int(name: str, default: int, lo: int, hi: int) -> int:
 
 
 # Spill when the full JSON dump exceeds this many characters.
-SPILL_CHARS = _bounded_int("PEON_MCP_SPILL_CHARS", 6000, 1000, 200_000)
-PREVIEW_CHARS = _bounded_int("PEON_MCP_PREVIEW_CHARS", 4000, 500, 50_000)
-STARTUP_SECONDS = _bounded_int("PEON_MCP_STARTUP_SECONDS", 600, 30, 1800)
+SPILL_CHARS = _bounded_int("MCP_SPILL_CHARS", 6000, 1000, 200_000)
+PREVIEW_CHARS = _bounded_int("MCP_PREVIEW_CHARS", 4000, 500, 50_000)
+STARTUP_SECONDS = _bounded_int("MCP_STARTUP_SECONDS", 600, 30, 1800)
 
 
 def _safe_token(text: str, fallback: str = "server") -> str:

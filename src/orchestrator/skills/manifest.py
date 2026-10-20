@@ -26,7 +26,7 @@ AGENTSKILLS_FIELDS = frozenset(
     {"name", "description", "license", "compatibility", "allowed-tools", "metadata"}
 )
 
-# Claude Code extensions (accepted under profile=claude-code / peon).
+# Claude Code extensions (accepted under profile=claude-code / native).
 CLAUDE_EXTENSION_FIELDS = frozenset(
     {
         "allowed_tools",
@@ -51,8 +51,8 @@ CLAUDE_EXTENSION_FIELDS = frozenset(
     }
 )
 
-# Peon product fields that belong under metadata: (legacy top-level tolerated).
-PEON_META_FIELDS = frozenset(
+# (legacy top-level tolerated).
+META_FIELDS = frozenset(
     {
         "category",
         "tags",
@@ -80,7 +80,7 @@ PEON_META_FIELDS = frozenset(
 class ParseProfile(str, Enum):
     AGENTSKILLS = "agentskills"
     CLAUDE_CODE = "claude-code"
-    PEON = "peon"
+    NATIVE = "native"
 
 
 class SkillParseError(ValueError):
@@ -120,12 +120,12 @@ class SkillManifest:
     shell: str = ""
     hooks: dict[str, object] | None = None
 
-    # Peon runtime hints derived from frontmatter / metadata.
+    # Runtime hints derived from frontmatter / metadata.
     allow_binaries: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
 
     raw_frontmatter: dict[str, Any] = field(default_factory=dict)
-    profile: str = ParseProfile.PEON.value
+    profile: str = ParseProfile.NATIVE.value
     root: Path | None = None
 
     @property
@@ -260,7 +260,7 @@ def _validate_name(name: str, *, profile: ParseProfile, directory_name: str) -> 
         )
     if profile == ParseProfile.AGENTSKILLS and not valid_skill_name(name):
         raise SkillParseError(f"Invalid skill name {name!r}", code="name_chars")
-    if profile == ParseProfile.PEON:
+    if profile == ParseProfile.NATIVE:
         if not valid_skill_name(name):
             raise SkillParseError(f"Invalid skill name {name!r}", code="name_chars")
         if directory_name and directory_name != name:
@@ -272,7 +272,7 @@ def _validate_name(name: str, *, profile: ParseProfile, directory_name: str) -> 
 
 def _validate_description(description: str, *, profile: ParseProfile) -> None:
     if profile == ParseProfile.CLAUDE_CODE and not description:
-        # Claude Code may default description empty; Agent Skills / Peon require it.
+        # Claude Code may default description empty; Agent Skills / the platform require it.
         return
     if not description:
         raise SkillParseError(
@@ -308,7 +308,7 @@ def parse_frontmatter_mapping(fm_raw: str) -> dict[str, Any]:
 def parse_skill_manifest(
     path: Path,
     *,
-    profile: ParseProfile | str = ParseProfile.PEON,
+    profile: ParseProfile | str = ParseProfile.NATIVE,
     text: str | None = None,
 ) -> SkillManifest:
     """Parse ``SKILL.md`` into a typed manifest. Raises ``SkillParseError``."""
@@ -430,7 +430,7 @@ def find_skill_manifest(skill_dir: Path) -> Path | None:
 def load_skill_manifest(
     path: Path,
     *,
-    profile: ParseProfile | str = ParseProfile.PEON,
+    profile: ParseProfile | str = ParseProfile.NATIVE,
 ) -> tuple[SkillManifest | None, tuple[str, ...]]:
     """Parse without raising: ``(manifest|None, error messages)``."""
     try:
@@ -442,7 +442,7 @@ def load_skill_manifest(
 __all__ = [
     "AGENTSKILLS_FIELDS",
     "CLAUDE_EXTENSION_FIELDS",
-    "PEON_META_FIELDS",
+    "META_FIELDS",
     "ParseProfile",
     "SkillManifest",
     "SkillParseError",

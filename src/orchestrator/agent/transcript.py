@@ -1,6 +1,6 @@
 """Engagement transcript records for CrewAI memory + role deduction digests.
 
-Producers emit structured records (never scrape free-text logs). Peon persists
+Producers emit structured records (never scrape free-text logs). A host persists
 and mirrors into CrewAI Memory; Learn / propose_work consume digests.
 """
 

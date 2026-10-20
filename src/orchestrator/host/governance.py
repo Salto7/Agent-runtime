@@ -1,4 +1,4 @@
-"""The resident governance PM — the library port of Peon's ``a2a.ensure_governance_pm`` & co.
+"""The resident governance PM.
 
 One per project, born ``idle`` and tied to no objective. It costs nothing while parked (event-driven: no poll, no
 LLM), receives spawn/progress informs (no wake) and wakes only on escalations (a blocked objective, a scope

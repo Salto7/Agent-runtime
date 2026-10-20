@@ -25,7 +25,7 @@ Decision rules:
 - Prefer the lightest approach that meets the goal
 - Prefer existing role tools / catalog CLIs over inventing one-off toolchains
 - Call provision_cli before missing CLIs ({INSTALL_CASCADE})
-- Use bash for authorized probes and ad-hoc shell under RoE
+- Use bash for authorized probes and ad-hoc shell under scope rules
 - If the operator asked for files/artifacts, never choose reply alone
 - Reuse procedural memory and prior results; avoid repeating known failures
 - Keep phases cheap to re-plan

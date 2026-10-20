@@ -1,4 +1,4 @@
-# Full stack for the orchestrator library (same pieces as Peon, minus the web app):
+# Full stack for the orchestrator library (redis, cognee, workers, scheduler):
 #
 #   cp .env.example .env                                  # set OPENROUTER_API_KEY, COGNEE_ENABLED=true
 #   docker compose --profile build build sandbox          # sandbox image (orchestrator-sandbox:local)
@@ -65,8 +65,8 @@ services:
       SANDBOX_HOST_UID: ${SANDBOX_HOST_UID:-}   # set to your host uid/gid so sandbox files stay yours
       SANDBOX_HOST_GID: ${SANDBOX_HOST_GID:-}
       JOB_REAP_S: ${JOB_REAP_S:-30}
-      PEON_DREAMING_ENABLED: ${PEON_DREAMING_ENABLED:-true}
-      PEON_DREAMING_INTERVAL_S: ${PEON_DREAMING_INTERVAL_S:-900}
+      DREAMING_ENABLED: ${DREAMING_ENABLED:-true}
+      DREAMING_INTERVAL_S: ${DREAMING_INTERVAL_S:-900}
     volumes: &worker_volumes
       # Bind mounts (not named volumes): the host CLI and the workers see the same workspaces/catalogs,
       # and sandbox bind paths resolve to real host paths.
@@ -85,7 +85,7 @@ services:
         condition: service_started
     command: ["worker"]
 
-  # Periodic dreaming: enqueues a dream_cycle every PEON_DREAMING_INTERVAL_S seconds.
+  # Periodic dreaming: enqueues a dream_cycle every DREAMING_INTERVAL_S seconds.
   scheduler:
     <<: *worker
     command: ["scheduler"]

@@ -1,4 +1,4 @@
-"""Peon semantic memory — Cognee-backed (replaces CrewAI LanceDB memory)."""
+"""Semantic memory — Cognee-backed (replaces CrewAI LanceDB memory)."""
 
 from __future__ import annotations
 
@@ -18,14 +18,14 @@ def memory_enabled() -> bool:
     return settings.cognee_enabled()
 
 
-def peon_memory_enabled() -> bool:
-    """Platform dataset ``peon`` writes/recalls (cross-project lessons)."""
-    return memory_enabled() and settings.get_bool("PEON_MEMORY_ENABLED", True)
+def platform_memory_enabled() -> bool:
+    """Platform dataset ``native`` writes/recalls (cross-project lessons)."""
+    return memory_enabled() and settings.get_bool("PLATFORM_MEMORY_ENABLED", True)
 
 
 def project_dataset(project_id: str) -> str:
     pid = str(project_id or "").strip()
-    return f"project_{pid}" if pid else "peon"
+    return f"project_{pid}" if pid else "platform"
 
 
 def job_session_id(job: Any) -> str:
@@ -98,7 +98,7 @@ def remember_transcript(job: Any, record: Any) -> None:
     )
 
 
-def remember_peon(
+def remember_platform(
     content: str,
     *,
     category: str = "digest",
@@ -106,8 +106,8 @@ def remember_peon(
     project_id: str = "",
     refs: list[str] | None = None,
 ) -> bool:
-    """Write a labeled document into the platform ``peon`` dataset."""
-    if not peon_memory_enabled():
+    """Write a labeled document into the ``platform`` dataset."""
+    if not platform_memory_enabled():
         return False
     text = (content or "").strip()
     if not text:
@@ -118,11 +118,11 @@ def remember_peon(
         "event": str(event or "").strip(),
         "project_id": str(project_id or "").strip(),
         "refs": list(refs or []),
-        "indications": [str(category or "digest"), "peon"],
+        "indications": [str(category or "digest"), "platform"],
     }
     result = CogneeBackend.shared().remember(
         doc,
-        dataset_name="peon",
+        dataset_name="platform",
         session_id="",
         self_improvement=False,
         run_in_background=True,
@@ -137,8 +137,8 @@ def recall_for_new_project(
     scope_hints: list[str] | None = None,
     top_k: int = 8,
 ) -> str:
-    """Recall peon-wide lessons to bootstrap a newly created project."""
-    if not peon_memory_enabled():
+    """Recall platform-wide lessons to bootstrap a newly created project."""
+    if not platform_memory_enabled():
         return ""
     # Lessons are retrieved by the *shape of the task* (title/summary). Target
     # identifiers are deliberately not part of the query: they only pull in
@@ -161,14 +161,14 @@ def recall_for_new_project(
         ]
     except Exception as exc:  # noqa: BLE001
         logger.debug("local lesson search failed: %s", exc)
-    result = CogneeBackend.shared().recall(query, datasets=["peon"], top_k=top_k)
+    result = CogneeBackend.shared().recall(query, datasets=["platform"], top_k=top_k)
     if result.get("ok") and not result.get("build_failed"):
         text = str(result.get("text") or "").strip()
         if text:
             parts.append(text)
     else:
         logger.warning(
-            "peon memory bootstrap recall skipped: %s",
+            "platform memory bootstrap recall skipped: %s",
             (result.get("error") or "unavailable")[:300],
         )
     return "\n".join(parts).strip()
@@ -194,7 +194,7 @@ def write_project_bootstrap(project_id: str, text: str) -> Path | None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            "# Memory bootstrap (Cognee peon recall)\n\n" + body + "\n",
+            "# Memory bootstrap (Cognee platform recall)\n\n" + body + "\n",
             encoding="utf-8",
         )
         return path
@@ -216,11 +216,11 @@ class _JobRow:
 
 
 class MemoryService(SharedServiceBase):
-    """Cognee-backed project and Peon memory lifecycle."""
+    """Cognee-backed project and Memory lifecycle."""
 
     enabled = staticmethod(memory_enabled)
     remember_transcript = staticmethod(remember_transcript)
-    remember_peon = staticmethod(remember_peon)
+    remember_platform = staticmethod(remember_platform)
     recall_for_new_project = staticmethod(recall_for_new_project)
     write_project_bootstrap = staticmethod(write_project_bootstrap)
 
@@ -263,7 +263,7 @@ class MemoryService(SharedServiceBase):
                 if isinstance(r, dict) and str(r.get("name") or "").strip()
             ]
             if not names:
-                names = ["peon"]
+                names = ["platform"]
             return backend.improve_many(
                 datasets=names,
                 session_ids=session_ids,
@@ -277,7 +277,7 @@ class MemoryService(SharedServiceBase):
                 run_in_background=run_in_background,
             )
         return backend.improve(
-            dataset=str(dataset or "peon").strip() or "peon",
+            dataset=str(dataset or "platform").strip() or "platform",
             session_ids=session_ids,
             run_in_background=run_in_background,
         )
@@ -294,7 +294,7 @@ class MemoryService(SharedServiceBase):
 
     @staticmethod
     def remember_into(target: Any, content: str, meta: dict[str, Any] | None = None) -> bool:
-        """Legacy hook: map into peon/project Cognee remember."""
+        """Legacy hook: map into native/project Cognee remember."""
         del target
         meta = meta or {}
         project_id = str(meta.get("project_id") or "")
@@ -320,7 +320,7 @@ class MemoryService(SharedServiceBase):
                 )
                 .get("ok")
             )
-        return remember_peon(
+        return remember_platform(
             text,
             category=str(meta.get("category") or "digest"),
             event=str(meta.get("event") or ""),

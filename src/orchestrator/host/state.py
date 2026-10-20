@@ -178,7 +178,7 @@ def _copy_objective(o: "Objective") -> "Objective":
 
 
 def finding_key(row: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
-    """Dedupe identity (Peon: kind + title + host + port + evidence_path), plus the subjects: the same title on
+    """Dedupe identity, plus the subjects: the same title on
     two different URLs / hashes is two findings."""
     subjects = sorted(
         f"{str(s.get('type') or '')}:{str(s.get('value') or '').lower()}"

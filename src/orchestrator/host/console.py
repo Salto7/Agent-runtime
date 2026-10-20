@@ -1,4 +1,4 @@
-"""Operator console chat — the library port of Peon's ``projects/console.py``.
+"""Operator console chat.
 
 One free-text operator message is routed to ``answer`` (project Q&A), ``instruct`` (steer live agents),
 ``replan`` (revise the objective graph) or ``stop`` (pause the project). A message addressed to one agent
@@ -25,7 +25,7 @@ Return ONLY compact JSON:
 {"intent":"answer"|"instruct"|"replan"|"stop","reason":"short"}
 
 intents:
-- answer — wants information about THIS project (status, findings, objectives, scope/RoE, what agents did).
+- answer — wants information about THIS project (status, findings, objectives, scope/scope rules, what agents did).
 - instruct — guidance, correction, priority, constraint or tactical suggestion that live agents can apply
   while continuing the current objective graph.
 - replan — explicitly requests a replan, adds/removes objectives or targets, changes the goal/scope, or
@@ -201,7 +201,7 @@ class OperatorConsole:
             result = {**result, "agent": {"id": now.id, "label": self.agent_label(now), "status": now.status}}
         else:
             reply = (f"Instructed {len(result.get('job_ids') or [])} live agent(s) with your note. "
-                     "They will adjust under Rules of Engagement — ask me for a status update anytime.")
+                     "They will adjust under scope rules — ask me for a status update anytime.")
         return {"ok": True, "mode": "instruct", **result, "reply": reply}
 
     def answer(self, project_id: str, text: str) -> dict[str, Any]:

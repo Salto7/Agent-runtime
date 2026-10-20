@@ -1,4 +1,4 @@
-"""Pluggable LLM providers for Peon (orchestrator library — no Django).
+"""Pluggable LLM providers for the orchestrator (orchestrator library — no Django).
 
 Default module: LiteLLM in-process. Optional OpenAI-compatible proxy exposure
 is controlled via env/settings (``LLM_PROXY_ENABLED``), not here.

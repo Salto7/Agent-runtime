@@ -58,7 +58,7 @@ def provision_cli(binary: str, package: str = "") -> str:
 @crew_tool(
     "bash",
     "Claude Bash tool. Run a shell command in this job's project sandbox "
-    "(RoE applies). Nothing runs on the host.",
+    "(scope rules applies). Nothing runs on the host.",
 )
 def bash(command: str) -> str:
     return SandboxTools().bash(command)
@@ -66,7 +66,7 @@ def bash(command: str) -> str:
 
 @crew_tool(
     "run_periodic",
-    "Repeat a sandbox shell command on an interval (watchdog ticks). RoE applies.",
+    "Repeat a sandbox shell command on an interval (watchdog ticks). scope rules applies.",
 )
 def run_periodic(
     command: str,
@@ -82,14 +82,14 @@ def run_periodic(
     )
 
 
-@crew_tool("roe_status", "Show Rules of Engagement summary for this project.")
+@crew_tool("roe_status", "Show scope rules summary for this project.")
 def roe_status() -> str:
     return _bridge("roe_summary")()
 
 
 @crew_tool(
     "assert_in_scope",
-    "Check whether a target value is authorized under active RoE before probing.",
+    "Check whether a target value is authorized under active scope rules before probing.",
 )
 def assert_in_scope(target: str) -> str:
     value = (target or "").strip()
@@ -98,7 +98,7 @@ def assert_in_scope(target: str) -> str:
     reason = get_job().bridge.assert_in_scope(value)
     if reason:
         return f"DENIED: {reason}"
-    return f"ALLOWED: {value} is in-scope under current RoE."
+    return f"ALLOWED: {value} is in-scope under current scope rules."
 
 
 @crew_tool(
@@ -174,7 +174,7 @@ def recall_memory(query: str) -> str:
     "body should include **Why:** and **How to apply:**. Same name updates the "
     "entry. scope: project (default) or platform — platform is for generic "
     "lessons only and must not contain targets, IPs, emails, URLs or customer "
-    "data. Do not save what is already in findings/RoE or is trivially re-derivable.",
+    "data. Do not save what is already in findings/scope rules or is trivially re-derivable.",
 )
 def save_memory(
     name: str,
@@ -266,7 +266,7 @@ def go_idle(reason: str = "") -> str:
     "aaaa_record, cname_record, ns_record, mx_record, ptr_record, srv_record, node "
     "(subdomain), port, contains, announces, registration, managed_by, owns, "
     "associated_with — or any custom slug. Recording an asset does NOT authorize it "
-    "(Rules of Engagement still decide scope). Use for infrastructure and "
+    "(scope rules still decide scope). Use for infrastructure and "
     "relationships; use record_finding for security findings.",
 )
 def record_assets(assets_json: str = "[]", relations_json: str = "[]") -> str:
@@ -356,7 +356,7 @@ def list_roles() -> str:
     "Spawn a child Job (default) or peer Job for in-lane follow-on skills or when "
     "the operator/brief asks for parallel work. Empty role_id = same expert. "
     "Optional skill_ids (comma-separated subset of this role's skill group). "
-    "link=child|peer. Optional scope_slice_json under RoE — do not invent smaller "
+    "link=child|peer. Optional scope_slice_json under scope rules — do not invent smaller "
     "CIDR slices of an authorized netblock unless the operator asked. After "
     "spawning, if you have nothing else to do, go_idle('waiting on children') — "
     "each child's result wakes you; use wait_for_work only for a quick status "
@@ -422,7 +422,7 @@ def propose_work(context_notes: str = "", max_agents: int = 4) -> str:
 
 @crew_tool(
     "ask_operator",
-    "Ask the human operator a question (HITL popup). Use when RoE is ambiguous, "
+    "Ask the human operator a question (HITL popup). Use when scope rules is ambiguous, "
     "replans are stuck, or a decision is required. options = comma-separated "
     "choices. blocks_job=true also blocks the current objective until reply.",
 )

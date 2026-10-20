@@ -98,7 +98,7 @@ class CrewAIJobRuntime(AgentRuntimeBase):
         brief = "\n\n".join(b for b in (base, steer) if b) or role.goal.strip()
         if request.resume and not steer:
             brief = (
-                "Continue from your last work under Rules of Engagement. "
+                "Continue from your last work under scope rules. "
                 "Do not repeat completed work.\n\n" + brief
             ).strip()
 
@@ -108,7 +108,7 @@ class CrewAIJobRuntime(AgentRuntimeBase):
 
         skill_ids = resolve_skill_ids(role, scope.extras.get("skill_ids"))
         scope.extras["skill_ids"] = list(skill_ids)
-        # RoE is enforced by the parent engagement / planner, not per skill job.
+        # scope rules is enforced by the parent engagement / planner, not per skill job.
 
         try:
             agent = build_crew_agent(

@@ -61,7 +61,7 @@ def install_directory(source: Path, *, origin: str = "") -> list[str]:
 
 
 def install_zip(data: bytes, *, filename: str = "pack.zip") -> list[str]:
-    with tempfile.TemporaryDirectory(prefix="peon-skill-zip-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="orchestrator-skill-zip-") as tmp:
         dest_root = extract_zip_safe(data, Path(tmp))
         return install_directory(dest_root, origin=f"zip:{filename}")
 
@@ -85,7 +85,7 @@ def install_relative_files(
             "upload contained only ignored paths (.venv, node_modules, …); "
             "choose the skill pack folder"
         )
-    with tempfile.TemporaryDirectory(prefix="peon-skill-drop-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="orchestrator-skill-drop-") as tmp:
         root = Path(tmp)
         for rel, payload in kept:
             target = safe_join(root, rel)

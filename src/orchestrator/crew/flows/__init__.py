@@ -1,4 +1,4 @@
-"""CrewAI Flow / Crew builders for Peon engagements."""
+"""CrewAI Flow / Crew builders for projects."""
 
 from orchestrator.crew.flows.engagement import build_engagement_crew
 

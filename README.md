@@ -1,12 +1,13 @@
 # orchestrator
 
-A stand-alone multi-agent runtime — the **brain of Peon without Django**. It runs
+A stand-alone, host-agnostic multi-agent runtime. It runs
 [CrewAI](https://crewai.com) crews (a manager, specialists and an analyzer) on top of
 [LiteLLM](https://litellm.ai), executes their work in per-project Docker sandboxes, lets agents
 delegate, message each other (A2A), remember (Cognee) and *dream* (turn finished runs into lessons),
 and lets operators grow the system with skills, CLI recipes and MCP servers — all as data.
 
-Use it next to Peon, or in any other project.
+Use it on its own or embed it in a larger application. Scope rules (see below) are **optional**: a project without
+them is unrestricted.
 
 ## What is in the box
 
@@ -19,16 +20,16 @@ Use it next to Peon, or in any other project.
 | **Objective scheduler** | `host.scheduler` | Plan → objectives with `depends_on`; ready objectives release in parallel, the rest get an idle *standby* agent that is woken with its dependencies' results as A2A handoffs; failed objectives **replan** (up to `AGENT_MAX_FAILURE_REPLANS`) then raise an operator prompt; per-project job slots (`MAX_AGENTS_PER_PROJECT`) |
 | **Checkpoints, resume, pause** | `host.checkpoints`, `host.control` | A checkpoint is written when a job finishes, idles or pauses; a message to a *finished* agent resumes it from its checkpoint (failed/cancelled agents stay stopped); `pause` / `resume` / `kill` for jobs and projects (a running job is asked to stop: its next command or spawn is refused and the turn ends `paused`) |
 | **Durable projects & schedules** | `host.schedules` | `start_project(kind="durable")` waits for `accept_plan`; `create_schedule` (cron / interval / once → a role job, or an objective re-run) is fired by the scheduler service; `skip_if_running`; paused/stopped projects don't fire; between cycles a durable project is `idle` |
-| **Operator control & console** | `host.operator`, `host.console`, `Orchestrator.chat` | `instruct_project` / `replan_project` (`REPLAN_MODE=manager|plan`) / `restart_project` / `stop_project` / `resume_project`; `chat(project_id, text, job_id=None)` routes free text to answer / instruct / replan / stop, or asks one agent about its work; operator-named assets are authorized into the RoE |
-| **Governance & engagement** | `host.governance`, `engagement` | Resident governance PM per project; RoE (scope, exclusions, candidates), finding normalizer/dedup, asset graph, queue-file finding ingest; stream sockets from sandbox tools |
+| **Operator control & console** | `host.operator`, `host.console`, `Orchestrator.chat` | `instruct_project` / `replan_project` (`REPLAN_MODE=manager|plan`) / `restart_project` / `stop_project` / `resume_project`; `chat(project_id, text, job_id=None)` routes free text to answer / instruct / replan / stop, or asks one agent about its work; operator-named assets are added to the scope rules when the project has them |
+| **Governance & findings** | `host.governance`, `engagement` | Resident governance PM per project; optional scope rules (scope, exclusions, candidates), finding normalizer/dedup, asset graph, queue-file finding ingest; stream sockets from sandbox tools |
 | **Config** | `.env`, `.env.example` | `.env` in the repo root is loaded at startup (never overrides real env); `.env.example` lists every option |
-| **Delegation** | `agent.delegation`, `host.control` | `spawn_work` (child / peer, depth + fan-out caps), `wait_for_work`, `propose_work`, scope slices checked against RoE |
+| **Delegation** | `agent.delegation`, `host.control` | `spawn_work` (child / peer, depth + fan-out caps), `wait_for_work`, `propose_work`, scope slices checked against the scope rules when set |
 | **A2A** | `brain.A2AHub`, `host.control` | Directed messages with per-pair and recipient caps, idle/wake (a finished child wakes its parent), inbox, delivery status; silent messages are coalesced — `A2A_INTERIM_WAKE_UNREAD` of them piled on an idle agent wake it anyway (governor and dependency standbys exempt) |
 | **Memory lifecycle** | `host.control`, `host.scheduler`, `api` | Every job starts with the memory index (project notes + platform lessons); a new project recalls earlier lessons into `memory_bootstrap.md`; a project digest is saved when it finishes (or `stop_project`); operator steers and typed prompt replies are captured as durable feedback |
 | **Memory** | `orchestrator.memory`, `crew.memory`, `crew.cognee_backend` | Typed notes (SQLite source of truth, BM25 recall) mirrored to **Cognee** over HTTP; platform lessons are guarded against leaking targets |
 | **Dreaming** | `crew.dreaming`, `crew.gist` | Curate finished runs into gists → synthesize playbooks → *propose* role/skill changes. Proposals are staged; only an explicit `apply_proposal(..., decision="approve")` changes the catalog |
 | **Toolsmith / Learn** | `orchestrator.learn`, `tools` | Draft a CLI recipe or skill from a prompt, lint it, and install-test it in a throwaway lab container before use; install cascade catalog → skill docs → LLM |
-| **Catalog** | `orchestrator.catalog` | Roles, skills, MCP servers and role bindings in one SQLite file (replaces Peon's Django models) |
+| **Catalog** | `orchestrator.catalog` | Roles, skills, MCP servers and role bindings in one SQLite file (replaces Django models) |
 | **Skills / MCP / Marketplace** | `skills`, `mcp`, `marketplace` | Agent Skills (`SKILL.md`) + native extensions, stdio MCP servers run in the sandbox, read-only marketplace scanner |
 
 ## Install
@@ -44,7 +45,7 @@ Python ≥ 3.11. Dependencies (`requirements.txt`): `litellm`, `crewai[a2a]`, `d
 `pydantic(-settings)`, `docker`, `ptyprocess`, `httpx`, `rank-bm25`, `croniter`, `skills-ref`, `jsonschema`, `pyyaml`, `python-dotenv`. The `mcp` client library is only
 needed to run the MCP supervisor outside the sandbox image (`pip install -e '.[mcp]'`); the sandbox image ships it.
 
-### The full stack (same pieces as Peon, minus the web app)
+### The full stack
 
 ```bash
 docker compose up -d --build      # redis · cognee · worker (Dramatiq) · scheduler (dream cycles)
@@ -59,7 +60,7 @@ ORCHESTRATOR_EXECUTOR=dramatiq REDIS_URL=redis://localhost:6379/0 COGNEE_URL=htt
 |---|---|
 | `redis` | Dramatiq broker **and** shared run state (jobs, findings, objectives, guidance, A2A messages) |
 | `worker` | `orchestrator worker` — Dramatiq consumers; each job = one agent turn in its project sandbox |
-| `scheduler` | `orchestrator scheduler` — enqueues a `dream_cycle` every `PEON_DREAMING_INTERVAL_S`, and reaps jobs whose worker died (see below) |
+| `scheduler` | `orchestrator scheduler` — enqueues a `dream_cycle` every `DREAMING_INTERVAL_S`, and reaps jobs whose worker died (see below) |
 | `cognee` | Cognee memory sidecar (`http://cognee:8001`) — graph recall + the dream/improve pipeline |
 | `litellm` *(profile `llm-proxy`)* | OpenAI-compatible LiteLLM proxy for OpenCode / external clients |
 | `sandbox` *(profile `build`)* | build target for the sandbox image |
@@ -91,7 +92,7 @@ print(res.ok, res.output)
 # the whole crew: manager → specialists (spawn / A2A) → analyzer writes findings/report.md
 res = orch.run_project("research X and report", role_ids=["researcher"], project_id="demo2")
 
-# plan → objectives with dependencies → scheduled execution (Peon's objective scheduler)
+# plan → objectives with dependencies → scheduled execution (the objective scheduler)
 pid = orch.start_project("research X and report")     # LLM plan, validated (manager first, analyzer last)
 orch.project_status(pid)                              # objectives + jobs; dependency standbys are `idle`
 orch.wait_project(pid)                                # → completed, or blocked (an operator prompt is open)
@@ -102,7 +103,7 @@ orch = Orchestrator(executor="dramatiq")   # needs `docker compose up -d redis w
 
 # operator console: free text is routed to answer / instruct / replan / stop (or ask one agent via job_id)
 orch.chat(pid, "which objectives are blocked?")       # → {"mode": "answer", "reply": ...}
-orch.chat(pid, "also cover the staging subnet")       # → replan (operator-named assets are added to the RoE scope)
+orch.chat(pid, "also cover the staging subnet")       # → replan (operator-named assets are added to the scope rules, if the project has any)
 orch.chat(pid, "what did you find so far?", job_id=job_id)    # a direct conversation with one agent
 
 # durable project + schedules (fired by the scheduler service, or `orch.fire_due_schedules()`)
@@ -132,12 +133,12 @@ Orchestrator (api.py)
        └─ per job: ProjectSandbox binds the Docker session → run_agent(JobScope(bridge=LocalAgentBridge))
             └─ CrewAIJobRuntime → CrewAI Agent (role + bound skills + crew tools)
                  tools → LocalAgentBridge: spawn/wait · send_message/check_inbox/go_idle · memory · findings
-                         objectives · RoE · workspace artifacts · ask_operator
+                         objectives · scope rules · workspace artifacts · ask_operator
                  tools → SandboxTools: bash · provision_cli · skill scripts · MCP (inside the sandbox)
   finished runs → JsonRunLog → DreamingService → memory notes (+ Cognee) → staged catalog proposals
   host/: ObjectiveScheduler (deps, standby agents, replan) · OperatorControl + OperatorConsole (instruct/replan/chat)
          GovernanceManager (resident PM) · ScheduleManager · checkpoints · heartbeat/reaper · stream sockets
-  engagement/: RoE, finding normalizer/dedup, asset graph      queue/: Dramatiq actors, Redis state, scheduler loop
+  engagement/: scope rules (optional), finding normalizer/dedup, asset graph      queue/: Dramatiq actors, Redis state, scheduler loop
 ```
 
 Behaviours worth knowing:
@@ -159,14 +160,14 @@ Behaviours worth knowing:
   stay editable and deletable without sudo.
 - **Recovery.** Jobs heartbeat from the moment they are claimed; a dead worker's job is resumed up to
   `JOB_MAX_ATTEMPTS`. Sibling jobs starting together create the project sandbox once (per-project lock).
-- **Scope (RoE).** Matching is host-aware: exact host or subdomain, CIDR containment for URLs and `host:port` targets,
+- **Scope rules (optional).** A project without a `Roe` is unrestricted; naming a host in chat never creates one. When set, matching is host-aware: exact host or subdomain, CIDR containment for URLs and `host:port` targets,
   URL-path scopes, IPv6 as /128 — never raw substring. Exclusions keep every entry (even `localhost`).
 - **Installs.** Pack/skill/marketplace installs skip symlinks, refuse option-like git sources, never read outside the
   pack, and `sync_mcps_from_disk` also prunes catalog rows whose pack folder was deleted.
 - **Telemetry.** CrewAI agents use CrewAI's native provider client, so their token/cost usage is recorded per kickoff
   (`llm_usage.record_crew_usage`) rather than through LiteLLM callbacks.
 
-**Replacing the Django layer.** Peon keeps jobs, objectives, findings and messages in a database and runs jobs on
+**Replacing a web-app layer.** A web app typically keeps jobs, objectives, findings and messages in a database and runs jobs on
 a queue. Here the same contract is `AgentBridgeBase` (what an agent sees) + `run_agent` (execution), implemented
 in plain Python by `LocalControlPlane` / `LocalAgentBridge`. A host with its own storage swaps the pieces it owns:
 
@@ -175,7 +176,7 @@ in plain Python by `LocalControlPlane` / `LocalAgentBridge`. A host with its own
 | Job storage / queue | pass your own `plane=` (subclass `LocalControlPlane`) or implement `AgentBridgeBase` and call `run_agent` yourself |
 | Roles / skills / MCP storage | subclass `catalog.PlatformCatalog`, install with `PlatformCatalog.set_shared(...)` |
 | Operator prompts (HITL) | `Orchestrator(operator=callable)`; answer later with `reply_to_prompt` |
-| Rules of engagement | `Roe(in_scope, exclusions, seed)` per project (none = unrestricted) |
+| Scope rules (optional) | `Roe(in_scope, exclusions, seed)` per project — leave it out for an unrestricted project |
 | A2A messages | `A2AHub(store=MessageStore)` |
 | Finished runs for dreaming | `DreamingService.shared().run_source = YourRunSource()` |
 | Operator settings | `orchestrator.settings.set_resolver(fn)` |
@@ -185,7 +186,7 @@ in plain Python by `LocalControlPlane` / `LocalAgentBridge`. A host with its own
 
 - **A role** — `PlatformCatalog.shared().upsert_role(role_id=..., kind="technical", goal=..., backstory=...)`.
   Bookend roles (`engagement-pm`, `analyzer`) are protected and unique.
-- **A skill** — a directory with `SKILL.md` (+ `scripts/`, `references/`, and a `peon.affinity.yaml` binding it to roles)
+- **A skill** — a directory with `SKILL.md` (+ `scripts/`, `references/`, and a `affinity.yaml` binding it to roles)
   under `skills/`, or `upsert_skill(skill_md=..., bindings=[...])`. Lint: `python examples/thin_client.py lint-skill NAME`.
   Skills without an affinity file are bound to roles by an LLM classifier on first load.
 - **A CLI tool** — `tools/catalog/<id>.yaml` (`install:` apt / github_release / git_clone / pip / custom, `verify:`).
@@ -218,9 +219,9 @@ earlier run is still consuming jobs with old code. Not exercised live: MCP serve
 
 ## Notes
 
-- `PORT_CHECKPOINT.md` is the porting log: decisions, what was verified live, and known limits (`CREW_REASONING_*` are inert until a role enables
-  reasoning; the OpenShell runtime has not been run live).
-- Internal names inherited from Peon are kept for compatibility (skill provider id `peon`, memory dataset `peon`,
-  `peon.affinity.yaml`, `PEON_MEMORY_ENABLED` / `PEON_DREAMING_ENABLED`).
-- Platform skills and prompts (project-manager, analyzer, planners) use Peon's engagement vocabulary: rules of
-  engagement, findings, report. Domain skills are not included; add your own under `skills/`.
+- Known limits: `CREW_REASONING_*` are inert until a role enables reasoning; the OpenShell runtime has not been run live.
+- Skill packs declare role affinity in an `affinity.yaml` next to `SKILL.md`; the first-party skill provider id is
+  `native` and the platform-wide memory dataset is `platform`. Older databases are migrated on open; renamed settings are `PLATFORM_MEMORY_ENABLED`, `DREAMING_ENABLED`, `DREAMING_INTERVAL_S`,
+  `MCP_STARTUP_SECONDS`, `MCP_SPILL_CHARS`, `MCP_PREVIEW_CHARS` and `ORCHESTRATOR_FINDINGS_QUEUE`.
+- Platform skills and prompts (project-manager, analyzer, planners) use generic project vocabulary: objectives,
+  findings, report. Domain skills are not included; add your own under `skills/`.

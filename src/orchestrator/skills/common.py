@@ -32,7 +32,7 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # Lint also accepts planner "auto" before coerce to a concrete lifecycle.
 LINT_LIFECYCLES = frozenset({"short", "long", "continuous", "auto"})
 
-# Peon skill categories (Agent Skills metadata).
+# Skill categories (Agent Skills metadata).
 SKILL_CATEGORIES = frozenset({"builtin", "custom"})
 CATEGORY_ALIASES = {
     "platform": "builtin",

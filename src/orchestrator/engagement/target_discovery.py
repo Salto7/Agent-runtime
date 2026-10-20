@@ -20,7 +20,7 @@ from orchestrator.engagement.target_shapes import (
 
 
 def _active_probe_role_ids() -> frozenset[str]:
-    """Technical roles that probe targets (RoE owned by the engagement)."""
+    """Technical roles that probe targets (scope rules owned by the engagement)."""
     try:
         return frozenset(
             r.id for r in RoleRegistry.shared().list_roles() if r.is_technical
@@ -29,7 +29,7 @@ def _active_probe_role_ids() -> frozenset[str]:
         return frozenset()
 
 
-_LLM_ASSET_SYSTEM = """You extract engagement subjects for Peon (authorized analysis).
+_LLM_ASSET_SYSTEM = """You extract engagement subjects for the orchestrator (authorized analysis).
 Return JSON only: {"assets":[{"type":"<slug>","value":"<string>"}]}
 type is a free-form lowercase slug from the operator's wording (examples: ip, fqdn,
 url, netblock, file, malware, sample, source, repo, package, hash, email,
@@ -225,7 +225,7 @@ def _subjects_from_finding_fields(row: dict[str, Any] | None) -> list[dict[str, 
 
 
 class SubjectCanonicalizer:
-    """Single ingress contract for persisted findings, RoE, and graph assets."""
+    """Single ingress contract for persisted findings, scope rules, and graph assets."""
 
     @staticmethod
     def expand(asset: dict[str, str]) -> list[dict[str, str]]:
@@ -250,7 +250,7 @@ class SubjectCanonicalizer:
 
 
 def _llm_suggest_assets(text: str) -> list[dict[str, str]]:
-    """LLM as a discovery producer — returns typed assets; peon trusts the types."""
+    """LLM as a discovery producer — returns typed assets; the platform trusts the types."""
     try:
         if not llm_configured():
             return []

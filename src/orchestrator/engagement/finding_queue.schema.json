@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "peon://schemas/finding_queue.schema.json",
-  "title": "Peon findings queue row",
-  "description": "NDJSON line shape for workspace/findings_queue.jsonl. MCP servers may append rows when PEON_FINDINGS_QUEUE is set.",
+  "$id": "orchestrator://schemas/finding_queue.schema.json",
+  "title": "Findings queue row",
+  "description": "NDJSON line shape for workspace/findings_queue.jsonl. MCP servers may append rows when ORCHESTRATOR_FINDINGS_QUEUE is set.",
   "type": "object",
   "required": ["title"],
   "additionalProperties": true,

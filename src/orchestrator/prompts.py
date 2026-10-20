@@ -4,7 +4,7 @@ from __future__ import annotations
 
 # CLI provision order (runtime + authoring + agent preamble).
 # 1) Binary already on PATH (Kali image / prior install)
-# 2) Peon tools/catalog recipe
+# 2) tools/catalog recipe
 # 3) LLM planner recipe
 INSTALL_CASCADE = "Kali PATH → tools/catalog → LLM"
 

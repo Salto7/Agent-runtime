@@ -1,6 +1,6 @@
 ---
 name: skill-writer
-description: Draft a Claude Agent Skill (SKILL.md + a normal script) from an operator prompt. The pack must pass skills-ref so it can run in Claude and in Peon. Use when creating or scaffolding a new skill.
+description: Draft a Claude Agent Skill (SKILL.md + a normal script) from an operator prompt. The pack must pass skills-ref so it can run in Claude and in the platform. Use when creating or scaffolding a new skill.
 allowed-tools: Bash Read
 ---
 
@@ -12,14 +12,14 @@ Produce a **skills-ref-clean** Claude Agent Skill under `workspace/learn/skill/<
 - a Run section that calls `run_skill_script`, not `bash scripts/run.sh`
 - optional reference docs when the body links them
 
-Do not emit Peon-only helpers or `metadata.jobable`. Role backstory already injects collaboration and memory tools.
+Do not emit native-only helpers or `metadata.jobable`. Role backstory already injects collaboration and memory tools.
 
-**Collaboration & memory are runtime, not authored.** Peon injects the A2A
+**Collaboration & memory are runtime, not authored.** The runtime injects the A2A
 (`send_message`/`check_inbox`/`go_idle`) and memory (`recall_memory`/`save_memory`)
 contract through the role at run time, so a portable pack must **not** hardcode
 those tool names. Describe reporting findings up / consuming upstream results in
 plain prose only; the standard "Collaboration & memory" block belongs in
-Peon-native packs, not skills-ref-clean ones.
+the platform-native packs, not skills-ref-clean ones.
 
 ## Scripts
 - `scripts/run.sh` — authoring entry (argv = skill request)

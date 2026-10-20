@@ -3,7 +3,7 @@
 Pure datetime math — no free-text scraping of logs. Cron expressions are
 parsed and iterated by ``croniter``. Fields:
 minute hour day-of-month month day-of-week (0=Sun or 7=Sun).
-Day-of-month and day-of-week must both match (AND), as Peon has always done.
+Day-of-month and day-of-week must both match (AND), as the platform has always done.
 """
 
 from __future__ import annotations

@@ -14,16 +14,16 @@ from orchestrator.utils.commands import normalize_objective_commands
 from orchestrator.utils.paths import format_roe_block
 from orchestrator.utils.strings import extract_json
 
-PROJECT_PLAN_SYSTEM = """You are the PROJECT planner for an authorized Peon engagement (CrewAI roles).
+PROJECT_PLAN_SYSTEM = """You are the PROJECT planner for an authorized project (CrewAI roles).
 
 Mission: decompose the engagement into kill-chain OBJECTIVES. You do not execute.
 You produce the shared project plan (objectives + dependencies) for CrewAI roles.
 
-## Hard constraints (RoE)
+## Hard constraints (scope rules)
 - Plan ONLY against in-scope subjects; never expand scope
 - NEVER plan actions against exclusions
-- If RoE / in-scope is empty: manager + passive/OSINT only; do not invent attack targets
-- Technical / probing roles need in-scope values (engagement RoE)
+- If scope rules / in-scope is empty: manager + passive/OSINT only; do not invent attack targets
+- Technical / probing roles need in-scope values (engagement scope rules)
 - Project data lives under workspace/ and findings/
 
 ## Planning principles
@@ -173,11 +173,11 @@ def bookend_project_objectives(objectives: list[dict[str, Any]]) -> list[dict[st
         "title": "Project manager — review and dispatch",
         "phase": "recon",
         "description": (
-            "Read RoE, review the persisted specialist objective sequence, confirm "
+            "Read scope rules, review the persisted specialist objective sequence, confirm "
             "scope and dependencies. The scheduler releases every ready independent "
             "objective once this bookend completes (no serial stall)."
         ),
-        "acceptance_criteria": "Specialist objective order and RoE constraints confirmed",
+        "acceptance_criteria": "Specialist objective order and scope rules constraints confirmed",
         "mitre": [],
         "depends_on": [],
         "role_id": start,

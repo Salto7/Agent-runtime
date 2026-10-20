@@ -50,7 +50,7 @@ def capability_tool_names() -> frozenset[str]:
 
 @lru_cache(maxsize=1)
 def role_allow_binaries() -> frozenset[str]:
-    """Union of skill ``allow_binaries`` across the Peon role catalog."""
+    """Union of skill ``allow_binaries`` across the role catalog."""
     try:
         # circular: RoleRegistry.invalidate → clear_command_caches
         from orchestrator.crew.roles.registry import RoleRegistry

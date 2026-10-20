@@ -10,7 +10,7 @@ Layout (see ../references/REPORT.md) — a penetration-test / red-team report:
 Appendix A. Steps taken and commands executed
 Appendix B. Limitations
 
-Keep this skill-side path free of peon/orchestrator imports.
+Keep this skill-side path free of orchestrator imports.
 """
 
 from __future__ import annotations
@@ -361,7 +361,7 @@ def _executive_summary(
 def _scope_and_method(runs: list[dict]) -> str:
     tools = sorted({r["binary"] or r["skill"] for r in runs})
     lines = [
-        "**Scope and rules of engagement:** as authorized for this engagement; "
+        "**Scope and scope rules:** as authorized for this engagement; "
         "all activity was limited to in-scope targets. Out-of-scope assets were "
         "not tested.",
         "",
@@ -444,7 +444,7 @@ def _recommendations(runs: list[dict], rows: list[dict]) -> str:
     if not out:
         out = [
             "_No remediation items were attached to findings; re-run under the "
-            "peon worker analyzer for structured recommendations._"
+            "orchestrator worker analyzer for structured recommendations._"
         ]
     return "\n".join(out).rstrip()
 
@@ -499,7 +499,7 @@ def build_report(ws: Path) -> Path:
         appendix_c = "\n".join(
             [
                 "## Appendix C. Asset inventory",
-                "<!-- peon:generated -->",
+                "<!-- orchestrator:generated -->",
                 "",
                 "Generated from the engagement artifacts — one row per item.",
                 "",

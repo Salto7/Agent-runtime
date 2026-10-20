@@ -1,4 +1,4 @@
-"""Objective scheduling — the library port of Peon's ``ObjectiveScheduler`` / ``ObjectivePlanSync``.
+"""Objective scheduling.
 
 A project plan is a list of objectives with ``depends_on`` edges (sequence numbers). The scheduler:
 
@@ -38,7 +38,7 @@ class ObjectiveScheduler:
         self.plane = plane
         self.store = plane.store
 
-    # ── plan sync (Peon: ObjectivePlanSync) ────────────────────────────────────
+    # ── plan sync ────────────────────────────────────
 
     def sync_plan(self, project_id: str, payload: list[dict[str, Any]], *, replace: bool = True) -> list[Objective]:
         """Create/update objectives from planner JSON; ``depends_on`` are 1-based list indices (or seqs).
@@ -137,7 +137,7 @@ class ObjectiveScheduler:
                 visit(o.seq)
 
     def sweep_orphan_standby(self, project_id: str) -> int:
-        """Cancel idle agents whose objective vanished, finished or was cancelled (Peon: ``sweep_orphan_standby``)."""
+        """Cancel idle agents whose objective vanished, finished or was cancelled."""
         by_seq = {o.seq: o for o in self.store.get_objectives(project_id)}
         n = 0
         for j in self.store.list_jobs(project_id):
@@ -189,10 +189,10 @@ class ObjectiveScheduler:
         return out
 
     def project_status(self, project_id: str) -> str:
-        """Derived project state (nothing stored) — Peon's ``reconcile_project_status`` as a pure function.
+        """Derived project state (nothing stored) — the ``reconcile_project_status`` as a pure function.
 
         ``empty`` | ``running`` | ``paused`` | ``blocked`` | ``completed`` | ``cancelled`` | ``idle`` (durable,
-        between cycles). ``blocked`` is Peon's *finished with errors*: a blocked objective or a failed job and
+        between cycles). ``blocked`` means *finished with errors*: a blocked objective or a failed job and
         nothing left that could move. Idle agents are standby, not work in flight: they keep the project open
         only while something can still wake them (a running/queued agent, a ready objective, an open prompt).
         """
@@ -226,7 +226,7 @@ class ObjectiveScheduler:
         if any(st == "blocked" for st in statuses):
             return "blocked"
         if statuses and all(st in {"completed", "cancelled"} for st in statuses):
-            # Peon: a failed job anywhere makes the finished project "finished with errors" (even after a replan)
+            # a failed job anywhere makes the finished project "finished with errors" (even after a replan)
             return "completed_with_errors" if any(j.status == "failed" for j in jobs) else "completed"
         if any(j.status == "failed" for j in jobs):
             return "blocked"
@@ -237,7 +237,7 @@ class ObjectiveScheduler:
     # ── transitions ────────────────────────────────────────────────────────────
 
     def mark(self, project_id: str, seq: int, status: str, *, reason: str = "") -> bool:
-        """Set an objective's status with Peon's guards (no completing with live jobs; no reopening completed)."""
+        """Set an objective's status with these guards (no completing with live jobs; no reopening completed)."""
         obj = self._objective(project_id, seq)
         if obj is None:
             return False
@@ -463,7 +463,7 @@ class ObjectiveScheduler:
             self.record_digest(pid, "finished" if status == "completed" else "finished_with_errors")
 
     def record_digest(self, project_id: str, status: str) -> None:
-        """Project-scope memory digest of the engagement's outcome (Peon: ``record_project_digest``)."""
+        """Project-scope memory digest of the engagement's outcome."""
         try:
             from orchestrator.memory import store as memory
 
@@ -604,7 +604,7 @@ class ObjectiveScheduler:
         """Approve / guide / deny a *failure-exhausted* prompt. Returns True if this kind was handled here.
 
         ``deny`` leaves the objective blocked; anything else resumes it — the failed job is re-queued with the
-        operator's guidance (``approve`` = plain retry), exactly like Peon's steer + ``queue_job``.
+        operator's guidance (``approve`` = plain retry), as a guidance steer plus a requeue.
         """
         if prompt.get("kind") != "failure_exhausted":
             return False
@@ -619,7 +619,7 @@ class ObjectiveScheduler:
         if failed is not None and failed.status in TERMINAL and failed.status != "cancelled":
             if guidance:
                 self.store.add_guidance(failed.id, guidance)
-            self.plane.requeue(failed.id)          # Peon: steer the failed job + queue_job
+            self.plane.requeue(failed.id)          # steer the failed job + queue_job
             return True
         obj = self._objective(project_id, seq)
         if obj is not None:

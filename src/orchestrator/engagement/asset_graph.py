@@ -1,10 +1,10 @@
 """OAM-inspired engagement asset graph store (open types & relations).
 
-Producers (RoE, findings, roles, operator, tools) upsert assets and typed
+Producers (scope rules, findings, roles, operator, tools) upsert assets and typed
 edges. Types and ``rel`` labels are free-form slugs — the UI must render
 unknown kinds without a Python/JS allowlist.
 
-RoE buckets remain the authorization overlay; this graph is the engagement
+scope rules buckets remain the authorization overlay; this graph is the engagement
 surface SoT for visualization and future enrichment.
 """
 
@@ -41,7 +41,7 @@ from orchestrator.engagement.target_shapes import (
 
 logger = logging.getLogger(__name__)
 
-# Sources whose rows are re-derived from RoE/findings on every rebuild. Anything
+# Sources whose rows are re-derived from scope rules/findings on every rebuild. Anything
 # else (agents, tools, operator) is durable producer data and survives rebuilds.
 _DERIVED_SOURCES = frozenset({"rules_of_engagement", "roe", "finding", ""})
 _MAX_SOURCES = 8
@@ -72,7 +72,7 @@ class AssetGraph:
 
 
 class Project:
-    """What the graph needs to know about a project: id, RoE, finding rows, and the store holding the graph."""
+    """What the graph needs to know about a project: id, scope rules, finding rows, and the store holding the graph."""
 
     def __init__(self, project_id: str, store: Any, *, roe: Any = None, findings: Iterable[dict[str, Any]] = ()):
         self.pk = self.id = str(project_id)
@@ -760,7 +760,7 @@ def _sync_finding(graph: AssetGraph, finding) -> None:
         value = str(item.get("value") or "").strip()
         if not value:
             continue
-        # Meaningful discovery stays as discovered (candidates come from RoE).
+        # Meaningful discovery stays as discovered (candidates come from scope rules).
         row = _upsert_asset(
             graph,
             typ=typ,
@@ -783,7 +783,7 @@ def _sync_project_graph(
     restore=None,
     first_seen: dict[str, str] | None = None,
 ) -> AssetGraph:
-    """Rebuild/merge graph from RoE + finding subjects (idempotent upserts)."""
+    """Rebuild/merge graph from scope rules + finding subjects (idempotent upserts)."""
     graph = graph or _get_or_create_graph(project)
     _prune_finding_pollution(graph)
     _compact_graph(graph)
@@ -853,7 +853,7 @@ def _view_payload(graph: AssetGraph) -> dict[str, Any]:
         kind = str(props.get("kind") or "asset")
         raw_source = str(a.get("source") or "")
         if raw_source in {"roe", "rules_of_engagement"}:
-            display_source = "Rules of Engagement"
+            display_source = "scope rules"
         elif raw_source == "finding":
             display_source = "Finding subject"
         else:
@@ -1118,7 +1118,7 @@ class AssetGraphEngine:
         graph = self.graph
         restore = first_seen = None
         if rebuild:
-            # Derived rows (RoE/findings) are recomputed; producer data
+            # Derived rows (scope rules/findings) are recomputed; producer data
             # (agents, tools, operator) is durable and re-applied on top.
             restore, first_seen = _producer_snapshot(graph)
             graph.assets = []

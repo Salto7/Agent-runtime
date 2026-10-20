@@ -4,7 +4,7 @@ from orchestrator.skills.providers.base import (
     CLAUDE_PROVIDER,
     DISCLOSURE_EAGER,
     DISCLOSURE_PROGRESSIVE,
-    PEON_PROVIDER,
+    NATIVE_PROVIDER,
     SkillDocument,
     SkillId,
     SkillProvider,
@@ -12,16 +12,16 @@ from orchestrator.skills.providers.base import (
 )
 from orchestrator.skills.providers.claude_agent import ClaudeAgentSkillsProvider
 from orchestrator.skills.providers.disk import DiskSkillsProvider
-from orchestrator.skills.providers.peon_native import PeonNativeProvider
+from orchestrator.skills.providers.native import NativeProvider
 
 __all__ = [
     "CLAUDE_PROVIDER",
     "DISCLOSURE_EAGER",
     "DISCLOSURE_PROGRESSIVE",
-    "PEON_PROVIDER",
+    "NATIVE_PROVIDER",
     "ClaudeAgentSkillsProvider",
     "DiskSkillsProvider",
-    "PeonNativeProvider",
+    "NativeProvider",
     "SkillDocument",
     "SkillId",
     "SkillProvider",

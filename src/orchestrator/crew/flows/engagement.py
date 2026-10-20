@@ -63,12 +63,12 @@ def build_engagement_crew(
         plan_extra = (
             "\n\nOPERATOR REPLAN / STEER:\n"
             f"{replan_note.strip()[:4000]}\n"
-            "Revise the remaining plan accordingly under RoE.\n"
+            "Revise the remaining plan accordingly under scope rules.\n"
         )
 
     engagement_task = Task(
         description=(
-            "Authorized Peon engagement.\n\n"
+            "Authorized project.\n\n"
             f"BRIEF:\n{(brief or '').strip()[:6000]}\n"
             f"{plan_extra}\n"
             f"Available specialists (reports_to={manager_spec.id}): {specialist_lines}\n"

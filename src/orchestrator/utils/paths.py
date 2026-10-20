@@ -1,4 +1,4 @@
-"""Path, workspace, and RoE formatting helpers."""
+"""Path, workspace, and scope rules formatting helpers."""
 
 from __future__ import annotations
 
@@ -88,9 +88,9 @@ def join_target_lines(
 
 
 def format_roe_block(roe: Any) -> str:
-    """Multi-line RoE summary for planner / agent prompts."""
+    """Multi-line scope rules summary for planner / agent prompts."""
     if roe is None:
-        return "RoE: (missing — do not invent targets; passive planning only)"
+        return "scope rules: (missing — do not invent targets; passive planning only)"
     parts = [
         f"In-scope (authorized values; type optional hint): "
         f"{join_target_lines(roe.in_scope)}",
@@ -107,4 +107,4 @@ def format_roe_block(roe: Any) -> str:
         parts.append(f"Window: {str(roe.testing_window_notes).strip()}")
     if getattr(roe, "abort_triggers", None):
         parts.append(f"Abort: {str(roe.abort_triggers).strip()}")
-    return "RoE:\n- " + "\n- ".join(parts)
+    return "scope rules:\n- " + "\n- ".join(parts)

@@ -2,7 +2,7 @@
 
 Package map:
 - ``api`` — :class:`Orchestrator` facade (plan / run / run_project / dream)
-- ``host`` — in-process control plane + per-project sandbox (replaces Peon's Django layer)
+- ``host`` — in-process control plane + per-project sandbox (replaces a Django control plane)
 - ``crew`` — CrewAI role + project-crew runtimes, tools, Cognee memory, dreaming
 - ``agent`` — job scope / bridge contract / delegation / runtime ABC
 - ``brain`` — A2A messaging hub

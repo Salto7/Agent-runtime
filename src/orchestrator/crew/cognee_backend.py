@@ -1,6 +1,6 @@
 """REST client for the Cognee Docker sidecar (official HTTP API).
 
-Peon does **not** ``import cognee`` in-process: the PyPI package is the memory
+The library does **not** ``import cognee`` in-process: the PyPI package is the memory
 engine itself (storage + pipelines). Web + worker share one sidecar writer via
 ``/api/v1/remember|recall|improve|cognify`` — see https://docs.cognee.ai/api-reference
 and https://github.com/topoteretes/cognee. LLM/embeddings for the sidecar are
@@ -91,7 +91,7 @@ class CogneeBackend(SharedServiceBase):
             stem = "memory-" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
         filename = f"{stem}.{ext}"
         fields: dict[str, str] = {
-            "datasetName": str(dataset_name or "peon").strip() or "peon",
+            "datasetName": str(dataset_name or "platform").strip() or "platform",
             "run_in_background": "true" if run_in_background else "false",
             "self_improvement": "true" if self_improvement else "false",
         }
@@ -139,7 +139,7 @@ class CogneeBackend(SharedServiceBase):
         kind = str(search_type or "CHUNKS").strip().upper()
         payload: dict[str, Any] = {
             "query": q,
-            "datasets": list(datasets or ["peon"]),
+            "datasets": list(datasets or ["platform"]),
             "searchType": kind,
             "topK": max(1, min(50, int(top_k or 8))),
         }
@@ -245,7 +245,7 @@ class CogneeBackend(SharedServiceBase):
     def clear_dataset(self, name: str) -> int:
         """Delete every document in dataset ``name`` (the dataset itself stays).
 
-        Used for datasets Peon fully owns and rebuilds from its own records.
+        Used for datasets the library fully owns and rebuilds from its own records.
         Returns how many documents were removed.
         """
         if not self.enabled():
@@ -379,7 +379,7 @@ class CogneeBackend(SharedServiceBase):
         if ids:
             payload["datasetIds"] = ids
         if not names and not ids:
-            payload["datasets"] = ["peon"]
+            payload["datasets"] = ["platform"]
         try:
             code, body = self._request("POST", "/api/v1/cognify", json_body=payload)
             return {"ok": 200 <= code < 300, "status_code": code, "body": body}

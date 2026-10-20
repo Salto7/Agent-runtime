@@ -1,4 +1,4 @@
-"""Load skill documents from a single on-disk root (peon + claude packs)."""
+"""Load skill documents from a single on-disk root (native + claude packs)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from orchestrator.skills.manifest import SkillParseError, parse_skill_manifest
 from orchestrator.skills.providers.base import (
     CLAUDE_PROVIDER,
     DISCLOSURE_PROGRESSIVE,
-    PEON_PROVIDER,
+    NATIVE_PROVIDER,
     SkillDocument,
     SkillId,
     SkillProvider,
@@ -32,7 +32,7 @@ def documents_from_root(
     *,
     source: str = "disk",
     skip_helpers: bool = True,
-    default_provider: str = PEON_PROVIDER,
+    default_provider: str = NATIVE_PROVIDER,
 ) -> list[SkillDocument]:
     """Discover packs under ``provider.root`` and classify each one."""
     root = provider.root
@@ -67,9 +67,9 @@ def documents_from_root(
             continue
         # Frontmatter name is bare; provider comes from kind inference.
         name = parsed.name
-        if kind.provider == PEON_PROVIDER and candidate.root.name.lower() != name:
+        if kind.provider == NATIVE_PROVIDER and candidate.root.name.lower() != name:
             logger.warning(
-                "peon skill dir/name mismatch %s vs %s",
+                "skill dir/name mismatch %s vs %s",
                 candidate.root.name,
                 name,
             )
@@ -116,7 +116,7 @@ def documents_from_root(
 
 
 class DiskSkillsProvider(SkillProvider):
-    """One mount root that may contain both Peon and Claude Agent Skills packs."""
+    """One mount root that may contain both the platform and Claude Agent Skills packs."""
 
     name = "disk"
     disclosure = DISCLOSURE_PROGRESSIVE
@@ -126,7 +126,7 @@ class DiskSkillsProvider(SkillProvider):
         root: Path,
         *,
         container_base: str = "/skills",
-        default_provider: str = PEON_PROVIDER,
+        default_provider: str = NATIVE_PROVIDER,
         skip_helpers: bool = True,
         source: str = "disk",
     ) -> None:

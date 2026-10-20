@@ -1,5 +1,5 @@
 """Periodic housekeeping, one tick every ``JOB_REAP_S`` seconds: fire due schedules, reap jobs whose worker died
-(no heartbeat for ``JOB_STALE_S``), and every ``PEON_DREAMING_INTERVAL_S`` enqueue a ``dream_cycle``.
+(no heartbeat for ``JOB_STALE_S``), and every ``DREAMING_INTERVAL_S`` enqueue a ``dream_cycle``.
 
 Dramatiq has no cron, so this is a tiny loop run as its own service
 (``python -m orchestrator.queue.scheduler`` / ``orchestrator scheduler``).
@@ -19,7 +19,7 @@ logger = logging.getLogger("orchestrator.scheduler")
 def run_forever(interval_s: float | None = None, *, once: bool = False) -> None:
     from orchestrator.queue.tasks import dream_cycle, worker_plane
 
-    interval = float(interval_s if interval_s is not None else settings.get_float("PEON_DREAMING_INTERVAL_S", 900))
+    interval = float(interval_s if interval_s is not None else settings.get_float("DREAMING_INTERVAL_S", 900))
     reap_every = max(1.0, settings.get_float("JOB_REAP_S", 30))
     stop = {"now": False}
     signal.signal(signal.SIGTERM, lambda *_: stop.update(now=True))
@@ -35,7 +35,7 @@ def run_forever(interval_s: float | None = None, *, once: bool = False) -> None:
                 logger.info("fired schedules → jobs %s", fired)
         except Exception:  # noqa: BLE001 — keep the loop alive
             logger.exception("scheduler tick failed")
-        if now >= next_dream and settings.get_bool("PEON_DREAMING_ENABLED", True):
+        if now >= next_dream and settings.get_bool("DREAMING_ENABLED", True):
             dream_cycle.send()
             logger.info("enqueued dream_cycle")
             next_dream = now + interval

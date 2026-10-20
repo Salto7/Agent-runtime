@@ -1,7 +1,7 @@
 """Claude Agent Skill tools are the crew surface.
 
 ``Bash`` / ``Read`` / ``Write`` / ``Edit`` map onto progressive + shell tools.
-Known Peon / CrewAI tool names pass through unchanged.
+Known CrewAI tool names pass through unchanged.
 """
 
 from __future__ import annotations

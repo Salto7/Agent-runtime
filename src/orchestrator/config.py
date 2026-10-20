@@ -18,12 +18,13 @@ logger = logging.getLogger(__name__)
 
 # Engagement default; host may override via configure(...) / ORCHESTRATOR_SYSTEM_PREAMBLE.
 _DEFAULT_SYSTEM_PREAMBLE = (
-    "You are a CrewAI agent working an authorized engagement.\n"
+    "You are a CrewAI agent working an authorized project.\n"
     "Execute selected skills from your role's skill group; skills do not spawn agents.\n"
     "Use only bound tools. Technical and engagement-pm agents may spawn_work.\n"
     f"Call provision_cli before missing CLIs ({INSTALL_CASCADE}).\n"
-    "Use bash for sandbox shell; never expand Rules of Engagement.\n"
-    "Stay in-scope; call assert_in_scope before networked probes.\n"
+    "Use bash for sandbox shell.\n"
+    "Scope rules are optional: when the project has them (see roe_status), never expand them, stay in scope and call\n"
+    "assert_in_scope before networked probes; with none set, scope is unrestricted.\n"
     "Obey OPERATOR INSTRUCTION / FOLLOW-UP messages when they appear.\n"
     f"{FINDINGS_GUIDANCE}"
 )
@@ -31,7 +32,7 @@ _DEFAULT_LLM_PROVIDER = "openrouter"
 _DEFAULT_LLM_MODULE = "litellm"
 _DEFAULT_LITELLM_MODEL = "openrouter/openai/gpt-5.6-luna"
 _DEFAULT_LLM_PROXY_URL = "http://litellm:4000/v1"
-# Public SoT for upstream provider → env var (also used by peon apps bootstrap).
+# Public SoT for upstream provider → env var (also used by native apps bootstrap).
 LLM_PROVIDER_KEY_ENV = {
     "openrouter": "OPENROUTER_API_KEY",
     "openai": "OPENAI_API_KEY",
@@ -67,7 +68,7 @@ class RuntimeConfig(BaseSettings):
     )
 
     config_root: Path = Field(
-        default_factory=Path.cwd, validation_alias=_env_names("ORCHESTRATOR_CONFIG_ROOT", "PEON_CONFIG_ROOT"), exclude=True
+        default_factory=Path.cwd, validation_alias=_env_names("ORCHESTRATOR_CONFIG_ROOT"), exclude=True
     )
 
     tools_catalog_dir: Path = Path("tools/catalog")
@@ -76,7 +77,7 @@ class RuntimeConfig(BaseSettings):
     )
     # Always ``<workspaces_dir>/platform`` unless passed explicitly.
     platform_workspace_dir: Path | None = Field(
-        None, validation_alias=_env_names("ORCHESTRATOR_PLATFORM_WORKSPACE_DIR", "PEON_PLATFORM_WORKSPACE_DIR")
+        None, validation_alias=_env_names("ORCHESTRATOR_PLATFORM_WORKSPACE_DIR")
     )
 
     llm_provider: str = _DEFAULT_LLM_PROVIDER
@@ -104,7 +105,7 @@ class RuntimeConfig(BaseSettings):
     # When RoleSpec.reasoning is true — CrewAI PlanningConfig knobs.
     crew_reasoning_effort: str = "low"
     crew_reasoning_max_attempts: int = 1
-    # Job/crew orchestration module (crewai only on Peon-crewAI).
+    # Job/crew orchestration module (crewai only on CrewAI).
     agent_module: str = "crewai"
     skills_dir: Path = Path("skills")
     # Deprecated: defaults to skills_dir. Kept so old env / mounts still resolve.
@@ -226,7 +227,7 @@ def load_env_file(root: Path | str | None = None) -> Path | None:
 
 def discover_root(start: Path | str | None = None) -> Path:
     """Find a project root that contains ``skills/`` and ``tools/catalog/`` (``ORCHESTRATOR_CONFIG_ROOT`` wins)."""
-    explicit = (os.environ.get("ORCHESTRATOR_CONFIG_ROOT") or os.environ.get("PEON_CONFIG_ROOT") or "").strip()
+    explicit = (os.environ.get("ORCHESTRATOR_CONFIG_ROOT") or "").strip()
     if explicit and start is None:
         return Path(explicit).expanduser().resolve()
     here = Path(start or Path.cwd()).resolve()

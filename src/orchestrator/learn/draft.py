@@ -165,7 +165,7 @@ def tool_suggest_human(prompt: str) -> str:
 
     return (
         f"Operator request:\n{prompt}\n\n"
-        f"Target image: the Peon sandbox (Kali). {CATALOG_INSTALL_PREFER}\n\n"
+        f"Target image: the sandbox (Kali). {CATALOG_INSTALL_PREFER}\n\n"
         f"Existing catalog tools (avoid duplicate ids):\n"
         f"{yaml.safe_dump(catalog_summaries(), sort_keys=False)}"
     )
@@ -193,7 +193,7 @@ def tool_replan_human(
         parts.append(f"Operator fix guidance:\n{fix}")
     parts.append(
         "Produce a revised catalog YAML that is more likely to install in the "
-        "Peon sandbox (Kali). Keep the same tool intent as the operator "
+        "sandbox (Kali). Keep the same tool intent as the operator "
         "request; fix install/verify based on the error"
         + (" and fix guidance." if fix else ".")
         + f" {CATALOG_INSTALL_PREFER}\n"
@@ -396,7 +396,7 @@ def resolve_intent(
 
 
 def draft_binary(skill_md: str) -> str:
-    """Catalog CLI declared on a draft, before shaping strips Peon metadata."""
+    """Catalog CLI declared on a draft, before shaping strips native metadata."""
     resolution = resolve_intent(skill_md=skill_md, suggested_tools=[], prompt="")
     if resolution.mode != "catalog_wrapper":
         return ""

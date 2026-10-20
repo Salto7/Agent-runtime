@@ -20,7 +20,7 @@ from orchestrator.agent.job import get_job
 from orchestrator.crew.roles.registry import RoleRegistry
 from orchestrator.sandbox.shell import ProvisionService, ShellRunner
 from orchestrator.sandbox.tool_output import ShellResult, render_tool_output
-from orchestrator.skills.providers.base import CLAUDE_PROVIDER, PEON_PROVIDER, SkillDocument
+from orchestrator.skills.providers.base import CLAUDE_PROVIDER, NATIVE_PROVIDER, SkillDocument
 from orchestrator.skills.registry import SkillRegistry
 from orchestrator.skills.runtime.interp import interpreter_argv
 from orchestrator.tools.install import InstallResolver
@@ -110,14 +110,14 @@ def _command_binary(command: str) -> str:
 
 
 def _gate(command: str) -> str | None:
-    """RoE and duplicate-scan refusal. ``None`` means allowed."""
+    """scope rules and duplicate-scan refusal. ``None`` means allowed."""
     cmd = (command or "").strip()
     if not cmd:
         return None
     bridge = get_job().bridge
     blocked = bridge.assert_command_allowed(cmd)
     if blocked:
-        return f"Error: RoE blocked — {blocked}"
+        return f"Error: scope rules blocked — {blocked}"
     checker = getattr(bridge, "duplicate_scan_reason", None)
     if callable(checker):
         dup = checker(cmd) or ""
@@ -144,7 +144,7 @@ def container_skill_root(doc: SkillDocument) -> str:
     dirname = doc.root.name if doc.root is not None else doc.name
     if doc.provider == CLAUDE_PROVIDER:
         return f"/skills-imported/{dirname}"
-    if doc.provider == PEON_PROVIDER:
+    if doc.provider == NATIVE_PROVIDER:
         return f"/skills/{dirname}"
     return f"/skills-{doc.provider}/{dirname}"
 
@@ -272,9 +272,9 @@ def _ensure_skill_setup(
     fingerprint = _setup_fingerprint(doc, files)
     env = {"PIP_DISABLE_PIP_VERSION_CHECK": "1"}
     if setup.kind == "pip":
-        cache = f"/workspace/.peon-skill-venvs/{_skill_cache_name(doc)}"
+        cache = f"/workspace/.skill-venvs/{_skill_cache_name(doc)}"
         python = f"{cache}/bin/python"
-        marker = f"{cache}/.peon-ready"
+        marker = f"{cache}/.ready"
         if _setup_marker_matches(session, marker, fingerprint):
             return python, env, ""
         if session.exec(["test", "-e", cache], timeout=15).ok:
@@ -321,8 +321,8 @@ def _ensure_skill_setup(
 
     if not session.which("npm"):
         return "", env, "npm is not available in the sandbox image"
-    cache = f"/workspace/.peon-skill-node/{_skill_cache_name(doc)}"
-    marker = f"{cache}/.peon-ready"
+    cache = f"/workspace/.skill-node/{_skill_cache_name(doc)}"
+    marker = f"{cache}/.ready"
     env["NODE_PATH"] = f"{cache}/node_modules"
     if _setup_marker_matches(session, marker, fingerprint):
         return "", env, ""

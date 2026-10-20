@@ -30,7 +30,7 @@ Rules:
   objective's primary role when unsure — same-role fan-out is allowed).
 - Do NOT invent role ids. Use transcript errors/gaps to choose better existing roles.
 - Prefer fewer sharp specialists over many vague ones (max 4).
-- Titles short; descriptions actionable under Rules of Engagement.
+- Titles short; descriptions actionable under scope rules.
 """
 
 

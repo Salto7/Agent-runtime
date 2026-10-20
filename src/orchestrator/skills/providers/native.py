@@ -11,15 +11,15 @@ from typing import Sequence
 
 from orchestrator.skills.providers.base import (
     DISCLOSURE_PROGRESSIVE,
-    PEON_PROVIDER,
+    NATIVE_PROVIDER,
     SkillDocument,
     SkillProvider,
 )
 from orchestrator.skills.providers.disk import documents_from_root
 
 
-class PeonNativeProvider(SkillProvider):
-    name = PEON_PROVIDER
+class NativeProvider(SkillProvider):
+    name = NATIVE_PROVIDER
     disclosure = DISCLOSURE_PROGRESSIVE
 
     def __init__(self, root: Path, *, container_base: str = "/skills") -> None:
@@ -30,5 +30,5 @@ class PeonNativeProvider(SkillProvider):
             self,
             source="native",
             skip_helpers=True,
-            default_provider=PEON_PROVIDER,
+            default_provider=NATIVE_PROVIDER,
         )

@@ -1,4 +1,4 @@
-"""In-process LiteLLM provider module (default Peon backend)."""
+"""In-process LiteLLM provider module (default backend)."""
 
 from __future__ import annotations
 

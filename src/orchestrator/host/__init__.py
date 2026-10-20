@@ -1,4 +1,4 @@
-"""Stand-alone host layer: the in-process replacement for Peon's Django control plane.
+"""Stand-alone host layer: the in-process replacement for a Django control plane.
 
 - ``control`` — :class:`LocalControlPlane` (jobs, threads, A2A wake) and
   :class:`LocalAgentBridge` (the agent's view of spawn / messaging / memory / findings)

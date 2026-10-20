@@ -31,7 +31,7 @@ _SKIP_DIR_NAMES = frozenset(
     }
 )
 
-_SIDECARS = (AFFINITY_NAME, "peon.lock.yaml")
+_SIDECARS = (AFFINITY_NAME, "skills.lock.yaml")
 _SETUP_FILES = (
     "requirements.txt",
     "pyproject.toml",

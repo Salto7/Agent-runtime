@@ -1,6 +1,6 @@
 """Unix-socket stream server (host listens; skills/clients connect and push NDJSON).
 
-Ported from Peon's ``StreamSocketServer`` — Django-free. Pair with
+Ported from the ``StreamSocketServer`` — Django-free. Pair with
 ``skills/helpers/orchestrator_tools.stream`` / ``StreamEmitter``.
 """
 

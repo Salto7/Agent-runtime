@@ -10,18 +10,18 @@ from typing import Sequence
 from orchestrator.skills.common import SKILL_NAME_RE, render_prompt_block
 from orchestrator.utils.paths import normalize_rel_path, safe_join
 
-PEON_PROVIDER = "peon"
+NATIVE_PROVIDER = "native"
 CLAUDE_PROVIDER = "claude"
 
 DISCLOSURE_EAGER = "eager"
 DISCLOSURE_PROGRESSIVE = "progressive"
 
-AFFINITY_NAME = "peon.affinity.yaml"
+AFFINITY_NAME = "affinity.yaml"
 
 
 @dataclass(frozen=True)
 class SkillId:
-    """``provider`` + skill ``name``. Bare strings address the Peon provider."""
+    """``provider`` + skill ``name``. Bare strings address the native provider."""
 
     provider: str
     name: str
@@ -32,7 +32,7 @@ class SkillId:
 
     @property
     def public(self) -> str:
-        if self.provider == PEON_PROVIDER:
+        if self.provider == NATIVE_PROVIDER:
             return self.name
         return self.key
 
@@ -44,7 +44,7 @@ class SkillId:
         if "/" in text:
             provider, _, name = text.partition("/")
         else:
-            provider, name = PEON_PROVIDER, text
+            provider, name = NATIVE_PROVIDER, text
         provider = provider.strip().lower()
         name = name.strip().lower()
         if not SKILL_NAME_RE.match(provider) or not SKILL_NAME_RE.match(name):
@@ -82,7 +82,7 @@ class SkillDocument:
     setup: SkillSetup | None = None
     unmapped_tools: tuple[str, ...] = ()
     # Absolute path inside the runtime. Host ``root`` is never interpolated
-    # into a command, because external skill roots may live outside Peon's
+    # into a command, because external skill roots may live outside the platform's
     # repository and are mounted at a different location in Docker.
     container_root: str = ""
     container_setup_root: str = ""
@@ -117,11 +117,11 @@ class SkillDocument:
     def access_error(self, *, role_id: str = "") -> str:
         """Role-gated access. Matches ``SkillRegistry.usable``.
 
-        Empty ``role_id`` skips the role check for peon (catalog/Learn), but
+        Empty ``role_id`` skips the role check for native skills (catalog/Learn), but
         imported skills always require a bound role.
         """
         role = (role_id or "").strip().lower()
-        if self.provider == PEON_PROVIDER:
+        if self.provider == NATIVE_PROVIDER:
             if not role:
                 return ""
             if role not in self.role_ids:

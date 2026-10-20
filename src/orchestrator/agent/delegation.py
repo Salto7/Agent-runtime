@@ -1,7 +1,7 @@
 """Shared multi-agent delegation bodies (Crew + capability adapters call these).
 
 Spawn policy is agent-driven: catalogs are the armory; the bridge enforces
-existence, deny-classes, caps, and RoE — not per-role YAML allowlists.
+existence, deny-classes, caps, and scope rules — not per-role YAML allowlists.
 """
 
 from __future__ import annotations

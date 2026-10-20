@@ -171,7 +171,7 @@ class LearnAuthoring(SharedServiceBase):
             raise ValueError(f"invalid skill name {nm!r}")
         if not md:
             raise ValueError("skill_md is required")
-        with tempfile.TemporaryDirectory(prefix=f"peon-lint-{nm}-") as tmp:
+        with tempfile.TemporaryDirectory(prefix=f"orchestrator-lint-{nm}-") as tmp:
             skill_dir = Path(tmp) / nm
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "SKILL.md").write_text(md + "\n", encoding="utf-8")

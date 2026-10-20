@@ -33,11 +33,15 @@ class CatalogSkill(_Hashed):
     pk_fields = ("skill_id",)
     _ordering = ("skill_id",)
     skill_id = text("")
-    provider = text("peon")
+    provider = text("native")
     description = text("")
     body = text("")
     manifest = js({})
     setup = js(None)
+
+    @classmethod
+    def _migrate(cls, conn) -> None:
+        conn.execute(f"UPDATE {cls._table} SET provider = 'native' WHERE provider = 'native'")   # pre-rename rows
 
 
 class CatalogMcp(_Hashed):

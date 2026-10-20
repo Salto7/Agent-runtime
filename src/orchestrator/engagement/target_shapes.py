@@ -1,4 +1,4 @@
-"""Target shape normalization and coercion for RoE / findings."""
+"""Target shape normalization and coercion for scope rules / findings."""
 
 from __future__ import annotations
 
@@ -365,7 +365,7 @@ def accept_asset(value: str, typ: str = "") -> dict[str, str] | None:
 
 
 def canonical_asset_key(typ: str, value: str) -> str:
-    """Stable identity shared by RoE, findings, and the graph."""
+    """Stable identity shared by scope rules, findings, and the graph."""
     accepted = accept_asset(value, typ)
     if accepted is None:
         family = sanitize_label(typ, default="other") or "other"
@@ -524,7 +524,7 @@ def extract_targets(*texts: str) -> list[dict[str, str]]:
 
     Free-text briefs are not scraped for vocabulary: only typed lines, quoted
     spans, whole-line proper names, and IP/URL/email shapes. Open prose goes
-    through ``SubjectCanonicalizer.suggest_assets`` at the RoE provisioner.
+    through ``SubjectCanonicalizer.suggest_assets`` at the scope rules provisioner.
     """
     blob = "\n".join(t for t in texts if t)
     found: list[dict[str, str]] = []
@@ -551,7 +551,7 @@ def extract_targets(*texts: str) -> list[dict[str, str]]:
                 if cleaned:
                     found.append({"type": typ, "value": cleaned})
             continue
-        # Whole-line asset name (RoE textarea / brief that is just "Brand").
+        # Whole-line asset name (scope rules textarea / brief that is just "Brand").
         named = as_asset_name(item)
         if named:
             found.append(named)

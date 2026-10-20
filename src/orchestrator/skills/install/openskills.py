@@ -22,7 +22,7 @@ def _reject_source(source: str) -> str:
 def install_openskills(source: str, *, revision: str = "") -> list[str]:
     """Install into the imported root. Bytes on disk are the pack; SKILL.md is unchanged."""
     origin = _reject_source(source)
-    with tempfile.TemporaryDirectory(prefix="peon-openskills-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="orchestrator-openskills-") as tmp:
         try:
             env = os.environ.copy()
             env["CI"] = "1"

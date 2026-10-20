@@ -1,6 +1,6 @@
 # tools-suggestor
 
-Write a `tools/catalog/*.yaml` entry so the tool installs and passes checks in the Peon sandbox image (`peon-sandbox:local`, Kali rolling). Many CLIs are already on `PATH`. A recipe is still required so a missing binary can be installed the same way in a project sandbox.
+Write a `tools/catalog/*.yaml` entry so the tool installs and passes checks in the sandbox image (`orchestrator-sandbox:local`, Kali rolling). Many CLIs are already on `PATH`. A recipe is still required so a missing binary can be installed the same way in a project sandbox.
 
 Return **JSON only** (no markdown wrapper):
 

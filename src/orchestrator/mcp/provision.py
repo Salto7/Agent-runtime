@@ -5,12 +5,12 @@ a supervisor that uses the official ``mcp`` Python SDK (``ClientSession`` +
 ``stdio_client``) inside the same container as the servers.
 
 Supervisor SoT: ``supervisor_runtime.py``, baked at ``/opt/orchestrator-mcp/supervisor.py``.
-Stale/missing image copies are materialized to ``/workspace/.peon/mcp/supervisor.py``.
+Stale/missing image copies are materialized to ``/workspace/.orchestrator/mcp/supervisor.py``.
 
 Large tool/resource results spill to ``workspace/mcp/artifacts/``; this module
 returns envelopes (preview + path), never a silent payload clip.
 
-Child env always includes ``PEON_FINDINGS_QUEUE`` so servers may append
+Child env always includes ``ORCHESTRATOR_FINDINGS_QUEUE`` so servers may append
 Finding-shaped NDJSON for job-end ingest.
 """
 
@@ -38,12 +38,12 @@ logger = logging.getLogger(__name__)
 
 _SOCK = "/tmp/orchestrator-mcp/supervisor.sock"
 _PID = "/tmp/orchestrator-mcp/supervisor.pid"
-_STAMP = "/workspace/.peon/mcp/supervisor.sha"
+_STAMP = "/workspace/.orchestrator/mcp/supervisor.sha"
 _IMAGE_PYTHON = "/opt/orchestrator-mcp-client/bin/python"
 _IMAGE_SUPERVISOR = "/opt/orchestrator-mcp/supervisor.py"
-_WORKSPACE_SUPERVISOR = "/workspace/.peon/mcp/supervisor.py"
+_WORKSPACE_SUPERVISOR = "/workspace/.orchestrator/mcp/supervisor.py"
 _PACKAGE_SUPERVISOR = Path(__file__).with_name("supervisor_runtime.py")
-_FALLBACK_VENV = "/workspace/.peon/mcp-venvs/_mcp_client"
+_FALLBACK_VENV = "/workspace/.orchestrator/mcp-venvs/_mcp_client"
 _FALLBACK_PYTHON = f"{_FALLBACK_VENV}/bin/python"
 _FALLBACK_MARKER = f"{_FALLBACK_VENV}/.orchestrator-mcp-sdk"
 # Supervisor uses ClientSession/stdio_client; verified on 1.x and 2.x.
@@ -58,7 +58,7 @@ _INSTALL_KINDS = frozenset({"pip", "uv", "npm"})
 # A recreated container under the same name still fails safe: the install
 # markers in the workspace are re-checked whenever the revision differs.
 _PREPARED: dict[tuple[str, str], str] = {}
-# Must match the supervisor's PEON_MCP_STARTUP_SECONDS default (cold uv/npx start).
+# Must match the supervisor's MCP_STARTUP_SECONDS default (cold uv/npx start).
 _STARTUP_SECONDS = 600
 _OP_EVENTS = {
     "list_tools": EVENT_LIST_MCP_TOOLS,
@@ -136,7 +136,7 @@ def mcp_prompt_block(role_id: str) -> str:
         "Servers may also append Finding rows to the project findings queue; "
         "prefer `list_findings` over pasting bulk rows through `record_findings`. "
         "Endpoint values are project configuration, not something you set. "
-        "RoE `asset:` names and seed intent subjects authorize passive collection.",
+        "scope rules `asset:` names and seed intent subjects authorize passive collection.",
     ]
     for rec in records:
         required = ", ".join(name for name, req in rec.env_schema if req) or "(none)"
@@ -185,7 +185,7 @@ def _invoke(
             "Set values under Project settings → MCP servers "
             "(use host.docker.internal for host endpoints)."
         )
-    dest = f"/workspace/.peon/mcp/{rec.mcp_id}"
+    dest = f"/workspace/.orchestrator/mcp/{rec.mcp_id}"
     install, install_error = _effective_install(rec)
     if install_error:
         return install_error
@@ -201,7 +201,7 @@ def _invoke(
         "command": command,
         "args": list(args),
         "cwd": dest if not rec.cwd else f"{dest}/{rec.cwd}",
-        "env": {**env, "PEON_FINDINGS_QUEUE": _FINDINGS_QUEUE},
+        "env": {**env, "ORCHESTRATOR_FINDINGS_QUEUE": _FINDINGS_QUEUE},
         "timeout": timeout,
         "revision": revision,
     }
@@ -429,7 +429,7 @@ def _effective_install(rec) -> tuple[dict | None, str]:
 
 
 def _venv_bin(mcp_id: str) -> str:
-    return f"/workspace/.peon/mcp-venvs/{mcp_id}/bin"
+    return f"/workspace/.orchestrator/mcp-venvs/{mcp_id}/bin"
 
 
 def _runtime_command(rec, dest: str, install: dict | None) -> tuple[str, tuple[str, ...]]:
@@ -477,9 +477,9 @@ def _install_python(session, rec, dest: str, install: dict) -> str:
     manifest = str(install.get("manifest") or "")
     digest = _install_digest(rec, install)
     lock = f"/tmp/orchestrator-mcp/install-{rec.mcp_id}.lock"
-    venv = f"/workspace/.peon/mcp-venvs/{rec.mcp_id}"
+    venv = f"/workspace/.orchestrator/mcp-venvs/{rec.mcp_id}"
     python = f"{venv}/bin/python"
-    marker = f"{venv}/.peon-ready"
+    marker = f"{venv}/.ready"
     if session.exec(["test", "-x", python], timeout=15).ok and _marker_current(
         session, marker, digest
     ):
@@ -533,7 +533,7 @@ def _install_npm(session, rec, dest: str, install: dict) -> str:
     lock = f"/tmp/orchestrator-mcp/install-{rec.mcp_id}.lock"
     if not session.which("npm"):
         return "Error: npm is not available in the sandbox image."
-    marker = f"{dest}/.peon-npm-ready"
+    marker = f"{dest}/.npm-ready"
     if _marker_current(session, marker, digest):
         return ""
     script = "\n".join(
@@ -580,10 +580,10 @@ def _run_post_install(session, rec, dest: str, install: dict | None) -> None:
             + list(commands)
         ).encode("utf-8")
     ).hexdigest()
-    marker = f"{dest}/.peon-post-install"
+    marker = f"{dest}/.post-install"
     if _marker_current(session, marker, digest):
         return
-    venv_bin = f"/workspace/.peon/mcp-venvs/{rec.mcp_id}/bin"
+    venv_bin = f"/workspace/.orchestrator/mcp-venvs/{rec.mcp_id}/bin"
     runner = (
         f'if [ -x {shlex.quote(venv_bin)}/python ]; then PATH={shlex.quote(venv_bin)}:"$PATH"; '
         f'run() {{ sh -c "$1"; }}; '
@@ -686,7 +686,7 @@ def _ensure_mcp_sdk(session) -> tuple[str, str]:
     script = "\n".join(
         [
             "set -e",
-            "mkdir -p /tmp/orchestrator-mcp /workspace/.peon/mcp-venvs",
+            "mkdir -p /tmp/orchestrator-mcp /workspace/.orchestrator/mcp-venvs",
             f"exec 8>{shlex.quote(lock)}",
             "flock -w 600 8",
             f"if [ -x {shlex.quote(_IMAGE_PYTHON)} ] && "
@@ -725,7 +725,7 @@ def _resolve_supervisor_script(session) -> tuple[str, str]:
             return "", _IMAGE_SUPERVISOR
     wrote = materialize_tree(
         session,
-        "/workspace/.peon/mcp",
+        "/workspace/.orchestrator/mcp",
         {"supervisor.py": _package_supervisor_text()},
     )
     if wrote:
@@ -753,7 +753,7 @@ def _ensure_supervisor(session) -> str:
     )
     launch = "\n".join(
         [
-            f"mkdir -p /tmp/orchestrator-mcp /workspace/.peon/mcp {shlex.quote(_ARTIFACT_DIR)}",
+            f"mkdir -p /tmp/orchestrator-mcp /workspace/.orchestrator/mcp {shlex.quote(_ARTIFACT_DIR)}",
             "exec 9>/tmp/orchestrator-mcp/supervisor.lock",
             "flock -w 20 9 || exit 1",
             f"pid=$(cat {shlex.quote(_PID)} 2>/dev/null || true)",

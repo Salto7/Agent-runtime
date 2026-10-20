@@ -1,6 +1,6 @@
 """Dynamic role↔skill affinity. Persisted affinity remains an optional cache.
 
-Native packs: ``peon.affinity.yaml`` next to SKILL.md.
+Native packs: ``affinity.yaml`` next to SKILL.md.
 Imported packs receive role bindings dynamically from their manifest content.
 """
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 AFFINITY_THRESHOLD = 0.5
 _BODY_LIMIT = 2500
 
-_CLASSIFY_SYSTEM = """You assign Peon engagement roles to a catalog item (skill or MCP server).
+_CLASSIFY_SYSTEM = """You assign project roles to a catalog item (skill or MCP server).
 
 Return ONLY JSON:
 {

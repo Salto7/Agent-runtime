@@ -1,4 +1,4 @@
-"""Peon-owned LLM provider ABC — all backends inherit this interface."""
+"""library LLM provider ABC — all backends inherit this interface."""
 
 from __future__ import annotations
 

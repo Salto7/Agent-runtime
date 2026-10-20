@@ -1,6 +1,6 @@
 """Skill-side stream (Unix socket).
 
-Lives under ``skills/helpers/``. No peon/orchestrator imports — skills stay
+Lives under ``skills/helpers/``. No orchestrator imports — skills stay
 runnable outside the control plane. Stream is a no-op when
 ORCHESTRATOR_STREAM_SOCKET / job id are unset.
 """

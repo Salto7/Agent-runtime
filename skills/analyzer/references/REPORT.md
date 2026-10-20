@@ -8,7 +8,7 @@ top-level sections, in this order, and no others:
 1. **Executive summary** — non-technical. Engagement purpose, **overall risk
    rating**, a findings-by-severity table, and the handful of issues that need
    attention first. No command output here.
-2. **Scope and methodology** — what was in scope (from the RoE), what was
+2. **Scope and methodology** — what was in scope (from the scope rules), what was
    excluded, the approach/phases and tooling used.
 3. **Findings summary** — one table: `ID | Severity | Finding | Affected
    asset`. IDs (`F-01`, `F-02`, …) are stable and reused below. Order by
@@ -36,7 +36,7 @@ add an **Attack narrative** subsection under Detailed findings that orders
 the findings as a kill chain. Only chain steps the evidence demonstrates.
 
 Mark a reporting objective `completed` if present. Skills queue structured
-rows via `record_finding` → `workspace/findings_queue.jsonl` (peon ingests to
+rows via `record_finding` → `workspace/findings_queue.jsonl` (the worker ingests to
 Finding). Use DB findings **and** every concrete row in workspace JSON arrays
 (for example `dangling_domains`, verified `domains`, entities). Phase markdown
 (`findings/<skill>.md`) is the source for Appendix A.

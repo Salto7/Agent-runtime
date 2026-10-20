@@ -25,7 +25,7 @@ def cli_on_path(binary: str) -> bool:
 class InstallResolver(SharedServiceBase):
     """Provision until the binary is on PATH.
 
-    Order: (1) already on Kali PATH → (2) Peon ``tools/catalog`` → (3) LLM.
+    Order: (1) already on Kali PATH → (2) ``tools/catalog`` → (3) LLM.
     """
 
     def resolve(
@@ -44,7 +44,7 @@ class InstallResolver(SharedServiceBase):
 
         errors: list[str] = []
 
-        # 2) Peon tools/catalog registry.
+        # 2) tools/catalog registry.
         cat = self._from_catalog(name)
         if cat is not None:
             if cat[0]:

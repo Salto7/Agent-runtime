@@ -75,7 +75,7 @@ def _build_role(
     if defn.kind == "engagement-pm":
         if not goal:
             goal = (
-                "Review RoE and the objective sequence, dispatch specialists, "
+                "Review scope rules and the objective sequence, dispatch specialists, "
                 "and hand off to the analyzer. Do not probe targets."
             )
         if not backstory:
@@ -103,7 +103,7 @@ def _build_role(
         if not backstory:
             backstory = (
                 f"You are `{defn.id}`, a technical expert. Run the authorized "
-                "scope as given. Stay in RoE scope."
+                "scope as given. Stay in scope."
             )
         reports_to = manager_id
         allow_delegation = False

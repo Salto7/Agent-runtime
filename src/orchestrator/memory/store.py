@@ -255,7 +255,7 @@ def record_project_digest(
 def _dataset(project_id: str) -> str:
     from orchestrator.crew.memory import project_dataset
 
-    return project_dataset(project_id) if project_id else "peon"
+    return project_dataset(project_id) if project_id else "platform"
 
 
 def _mirror(entry: MemoryEntry, project_id: str) -> None:
@@ -291,26 +291,26 @@ def _mirror(entry: MemoryEntry, project_id: str) -> None:
 
 
 def sync_platform_dataset() -> dict[str, Any]:
-    """Rebuild the platform ``peon`` Cognee dataset from the platform memory entries.
+    """Rebuild the ``platform`` Cognee dataset from the platform memory entries.
 
     The memory table is the source of truth; Cognee is a retrieval index over
     it. A full, idempotent rebuild keeps the index exactly equal to the records
     (edits replace, retired notes disappear).
     """
     from orchestrator.crew.cognee_backend import CogneeBackend
-    from orchestrator.crew.memory import memory_enabled, peon_memory_enabled
+    from orchestrator.crew.memory import memory_enabled, platform_memory_enabled
 
-    if not (memory_enabled() and peon_memory_enabled()):
+    if not (memory_enabled() and platform_memory_enabled()):
         return {"ok": False, "skipped": True}
     backend = CogneeBackend.shared()
     entries = list(_scope(None))
-    removed = backend.clear_dataset("peon")
+    removed = backend.clear_dataset("platform")
     sent = 0
     for e in entries:
         text = f"# {e.name} ({e.kind})\n{e.description}\n\n{(e.body or '').strip()}".strip()
         result = backend.remember(
             text,
-            dataset_name="peon",
+            dataset_name="platform",
             session_id="",
             self_improvement=False,
             run_in_background=True,
@@ -428,7 +428,7 @@ def recall_text(project_id: str | None, query: str, *, role_id: str = "") -> str
         from orchestrator.crew.memory import MemoryService, memory_enabled
 
         if memory_enabled() and (query or "").strip():
-            datasets = ([_dataset(_pid(project_id))] if _pid(project_id) else []) + ["peon"]
+            datasets = ([_dataset(_pid(project_id))] if _pid(project_id) else []) + ["platform"]
             graph = (MemoryService.recall(query, datasets=datasets, top_k=4) or "").strip()
     except Exception:  # noqa: BLE001
         graph = ""

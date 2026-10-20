@@ -10,7 +10,7 @@ from orchestrator.skills.runtime.sandbox import SandboxTools, job_role_id
 
 
 def resolve_skill_document(name: str) -> SkillDocument | None:
-    """Bare names prefer peon; if missing, try ``claude/<name>``."""
+    """Bare names prefer native; if missing, try ``claude/<name>``."""
     reg = SkillRegistry.shared()
     doc = reg.get(name)
     if doc is None and "/" not in str(name or ""):
@@ -66,7 +66,7 @@ def _mcp_runtime_note(skill_id: str, *, role_id: str) -> str:
     if mid not in set(bound_mcp_ids(role_id)):
         return ""
     return (
-        f"## Peon MCP runtime\n"
+        f"## MCP runtime\n"
         f"This skill is MCP server `{mid}` in the project sandbox. "
         f"Use `list_mcp_tools(\"{mid}\")` then `call_mcp_tool(\"{mid}\", …)` "
         f"for this server's pipeline and lookups."

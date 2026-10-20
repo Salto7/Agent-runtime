@@ -31,7 +31,7 @@ _SPEC_FIELDS = frozenset(
 )
 _CLAUDE_TOOL_KEYS = frozenset({"bash", "read", "write", "edit"})
 _CANONICAL_TOOL = {"bash": "Bash", "read": "Read", "write": "Write", "edit": "Edit"}
-_PEON_META = frozenset(
+_NATIVE_META = frozenset(
     {
         "jobable",
         "taskable",
@@ -52,7 +52,7 @@ _PEON_META = frozenset(
 
 
 def portable_cli_script(binary: str) -> str:
-    """Bash entry a Claude agent and the Peon sandbox can both execute."""
+    """Bash entry a Claude agent and the sandbox can both execute."""
     cli = (binary or "").strip()
     if not cli or any(ch in cli for ch in "\n\r\x00"):
         raise ValueError("binary name is required")
@@ -97,7 +97,7 @@ def shape_skill_md(
             clean[key] = value
     meta = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
     portable_meta = {
-        key: value for key, value in meta.items() if key not in _PEON_META and value is not None
+        key: value for key, value in meta.items() if key not in _NATIVE_META and value is not None
     }
     if portable_meta:
         clean["metadata"] = portable_meta
@@ -130,12 +130,12 @@ def shape_files(
     *,
     binary: str = "",
 ) -> dict[str, str]:
-    """Drop Peon-only ``skill_entry`` wrappers. Add a bash entry when a CLI is known."""
+    """Drop native-only ``skill_entry`` wrappers. Add a bash entry when a CLI is known."""
     out = {
         str(key): str(value) for key, value in (files or {}).items() if normalize_rel_path(str(key))
     }
-    peon_only = [rel for rel, body in out.items() if "skill_entry" in body or "run_binary(" in body]
-    for rel in peon_only:
+    native_only = [rel for rel, body in out.items() if "skill_entry" in body or "run_binary(" in body]
+    for rel in native_only:
         out.pop(rel, None)
     cli = (binary or "").strip()
     if cli and not str(out.get(SCRIPT_SH) or "").strip():
@@ -160,8 +160,8 @@ def lint_claude_files(
             issues.append(
                 LintIssue(
                     "error",
-                    "peon_runtime",
-                    f"{rel} imports Peon helpers. Ship a normal script with a shebang.",
+                    "native_runtime",
+                    f"{rel} imports orchestrator helpers. Ship a normal script with a shebang.",
                 )
             )
     known = set(file_map)
@@ -183,7 +183,7 @@ def lint_claude_files(
 
 
 def _skills_ref_errors(name: str, skill_md: str, files: dict[str, str]) -> list[str]:
-    with tempfile.TemporaryDirectory(prefix=f"peon-claude-{name}-") as tmp:
+    with tempfile.TemporaryDirectory(prefix=f"orchestrator-claude-{name}-") as tmp:
         root = Path(tmp) / name
         root.mkdir()
         (root / "SKILL.md").write_text(

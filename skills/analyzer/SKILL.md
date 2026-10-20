@@ -14,7 +14,7 @@ skills → **`analyzer`** (this skill) → `findings/report.md`.
 
 ## Sources (read-only)
 1. Structured findings (`list_findings` / DB / `workspace/findings_queue.jsonl`)
-2. Objective statuses + RoE
+2. Objective statuses + scope rules
 3. Workspace JSON handoffs under `workspace/` and `workspace/mcp/artifacts/`
    (pipeline reports, plugin dumps). Prefer the largest complete JSON for a
    given run over truncated previews.

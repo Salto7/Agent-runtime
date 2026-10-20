@@ -1,8 +1,8 @@
-"""Finding normalize / record / workspace-queue ingest — the library port of Peon's ``findings.py``.
+"""Finding normalize / record / workspace-queue ingest.
 
 A finding is an *engagement discovery about subjects* (hosts, services, URLs, files, …) with evidence — never
 job/objective progress. ``FindingNormalizer`` demands at least one subject (explicit ``subjects`` or derived from
-host/port/url/…). ``FindingService.record`` stores it (deduped), queues novel subjects as RoE *candidates* (not
+host/port/url/…). ``FindingService.record`` stores it (deduped), queues novel subjects as scope rules *candidates* (not
 authorized until promoted), and syncs the asset graph. ``ingest_workspace_findings`` consumes
 ``workspace/findings_queue.jsonl`` written by skills.
 """
@@ -126,7 +126,7 @@ class FindingService:
             logger.warning("asset graph sync failed: %s", exc)
 
     def _queue_discovered_candidates(self, project_id: str, row: dict[str, Any]) -> None:
-        """Novel subjects from structured fields become RoE candidates (surfaced, not authorized)."""
+        """Novel subjects from structured fields become scope rules candidates (surfaced, not authorized)."""
         meta = self.store.get_project(project_id)
         roe = meta.roe
         if roe is None:

@@ -22,7 +22,7 @@ from orchestrator.utils.install_skip import (
 from orchestrator.utils.paths import safe_join
 
 _PKG = re.compile(r"^(@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+$")
-# Standard / host-agnostic MCP manifests only (no Peon-proprietary names).
+# Standard / host-agnostic MCP manifests only (no vendor-specific names).
 # Hidden ``.mcp.json`` may be read for discovery; installs persist as ``mcp.json``.
 _MANIFEST_NAMES = (
     "mcp.json",
@@ -270,7 +270,7 @@ def _from_disk(
         "directory has no mcp.json / package.json to import. "
         "Browsers do not upload hidden files — a host-only ``.mcp.json`` is invisible "
         "to the folder picker; add a non-hidden ``mcp.json`` or keep ``mcp_server.py`` "
-        "so Peon can infer a stdio server."
+        "so the platform can infer a stdio server."
     )
 
 
@@ -530,7 +530,7 @@ def _collect_text_tree(root: Path) -> dict[str, str]:
 
 
 def _normalize_import(document: dict[str, Any]) -> dict[str, Any]:
-    """Adapt Claude Desktop / host configs to Peon sandbox catalog shape."""
+    """Adapt Claude Desktop / host configs to sandbox catalog shape."""
     out = dict(document)
     command = out.get("command")
     if isinstance(command, list) and command:

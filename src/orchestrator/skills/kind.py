@@ -12,14 +12,14 @@ from typing import Any, Mapping
 from orchestrator.skills.common import split_frontmatter
 from orchestrator.skills.manifest import (
     CLAUDE_EXTENSION_FIELDS,
-    PEON_META_FIELDS,
+    META_FIELDS,
     ParseProfile,
     parse_frontmatter_mapping,
 )
 from orchestrator.skills.providers.base import (
     AFFINITY_NAME,
     CLAUDE_PROVIDER,
-    PEON_PROVIDER,
+    NATIVE_PROVIDER,
 )
 
 # Nested agent skill roots (path segments).
@@ -32,10 +32,10 @@ _AGENT_SKILL_MARKERS = frozenset(
     }
 )
 
-# metadata keys that are generic Agent Skills / Claude, not Peon-specific.
+# metadata keys that are generic Agent Skills / Claude, not platform-specific.
 _GENERIC_META = frozenset({"author", "version", "tags", "license", "provider"})
 
-# Claude-only frontmatter keys that Peon first-party packs do not use.
+# Claude-only frontmatter keys that first-party packs do not use.
 _CLAUDE_ONLY_FIELDS = frozenset(CLAUDE_EXTENSION_FIELDS) - {
     "allowed_tools",  # alias of allowed-tools; common to both
 }
@@ -56,8 +56,8 @@ def _norm_provider(raw: object) -> str | None:
         return None
     if "/" in text:
         text = text.split("/", 1)[0]
-    if text in {"peon", "native", "first-party"}:
-        return PEON_PROVIDER
+    if text in {"native", "first-party"}:
+        return NATIVE_PROVIDER
     if text in {"claude", "claude-code", "claude_code", "imported", "agentskills", "agent-skills"}:
         return CLAUDE_PROVIDER
     return None
@@ -97,17 +97,17 @@ def _under_agent_tree(root: Path) -> bool:
     return False
 
 
-def _has_peon_sidecar(root: Path) -> bool:
-    return (root / AFFINITY_NAME).is_file() or (root / "peon.lock.yaml").is_file()
+def _has_native_sidecar(root: Path) -> bool:
+    return (root / AFFINITY_NAME).is_file() or (root / "skills.lock.yaml").is_file()
 
 
-def _has_peon_metadata(fm: Mapping[str, Any]) -> bool:
+def _has_native_metadata(fm: Mapping[str, Any]) -> bool:
     meta = fm.get("metadata") if isinstance(fm.get("metadata"), dict) else {}
     if not isinstance(meta, dict):
         return False
     for key in meta:
         k = str(key).strip().lower()
-        if k in PEON_META_FIELDS and k not in _GENERIC_META:
+        if k in META_FIELDS and k not in _GENERIC_META:
             return True
     return False
 
@@ -126,51 +126,51 @@ def infer_skill_kind(
     root: Path,
     *,
     frontmatter: Mapping[str, Any] | None = None,
-    default_provider: str = PEON_PROVIDER,
+    default_provider: str = NATIVE_PROVIDER,
 ) -> SkillKind:
     """Deduce provider + parse profile for a skill pack directory.
 
     Precedence (structured signals only — never prose scraping):
     1. ``provider`` / ``metadata.provider``
     2. Nested under ``.claude/skills`` (or agents/cursor equivalents) → claude
-    3. ``peon.affinity.yaml`` / ``peon.lock.yaml`` → peon
-    4. Peon-specific ``metadata.*`` keys → peon
+    3. ``affinity.yaml`` / ``skills.lock.yaml`` → native
+    4. platform-specific ``metadata.*`` keys → native
     5. Claude-only frontmatter extensions → claude
-    6. ``default_provider`` (``skills/`` → peon; extra import roots → claude)
+    6. ``default_provider`` (``skills/`` → native; extra import roots → claude)
     """
     pack = Path(root)
     fm = _load_frontmatter(pack, frontmatter)
-    default = _norm_provider(default_provider) or PEON_PROVIDER
+    default = _norm_provider(default_provider) or NATIVE_PROVIDER
 
     explicit = _norm_provider(fm.get("provider"))
     meta = fm.get("metadata") if isinstance(fm.get("metadata"), dict) else {}
     if explicit is None and isinstance(meta, dict):
         explicit = _norm_provider(meta.get("provider"))
-    if explicit == PEON_PROVIDER:
-        return SkillKind(PEON_PROVIDER, ParseProfile.PEON, "frontmatter.provider")
+    if explicit == NATIVE_PROVIDER:
+        return SkillKind(NATIVE_PROVIDER, ParseProfile.NATIVE, "frontmatter.provider")
     if explicit == CLAUDE_PROVIDER:
         return SkillKind(CLAUDE_PROVIDER, ParseProfile.CLAUDE_CODE, "frontmatter.provider")
 
     if _under_agent_tree(pack):
         return SkillKind(CLAUDE_PROVIDER, ParseProfile.CLAUDE_CODE, "agent_skills_path")
 
-    if _has_peon_sidecar(pack):
-        return SkillKind(PEON_PROVIDER, ParseProfile.PEON, "peon_sidecar")
+    if _has_native_sidecar(pack):
+        return SkillKind(NATIVE_PROVIDER, ParseProfile.NATIVE, "native_sidecar")
 
-    if _has_peon_metadata(fm):
-        return SkillKind(PEON_PROVIDER, ParseProfile.PEON, "peon_metadata")
+    if _has_native_metadata(fm):
+        return SkillKind(NATIVE_PROVIDER, ParseProfile.NATIVE, "native_metadata")
 
     if _has_claude_only_fields(fm):
         return SkillKind(CLAUDE_PROVIDER, ParseProfile.CLAUDE_CODE, "claude_extensions")
 
     if default == CLAUDE_PROVIDER:
         return SkillKind(CLAUDE_PROVIDER, ParseProfile.CLAUDE_CODE, "default_claude")
-    return SkillKind(PEON_PROVIDER, ParseProfile.PEON, "default_peon")
+    return SkillKind(NATIVE_PROVIDER, ParseProfile.NATIVE, "default_native")
 
 
 def catalog_id_for(name: str, kind: SkillKind) -> str:
     slug = str(name or "").strip().lower()
-    if kind.provider == PEON_PROVIDER:
+    if kind.provider == NATIVE_PROVIDER:
         return slug
     return f"{CLAUDE_PROVIDER}/{slug}"
 

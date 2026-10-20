@@ -62,7 +62,7 @@ def skill_spec_from_manifest(manifest: SkillManifest) -> SkillSpec:
 def parse_skill_md(
     path: Path,
     *,
-    profile: ParseProfile | str = ParseProfile.PEON,
+    profile: ParseProfile | str = ParseProfile.NATIVE,
 ) -> SkillSpec:
     """Parse agentskills.io / Claude-style SKILL.md.
 

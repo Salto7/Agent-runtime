@@ -1,6 +1,6 @@
 # skill-writer authoring contract
 
-You author **Claude Agent Skills**. A finished pack must pass `skills-ref`. Peon runs the same files: the script is a normal executable, and agents call it with `run_skill_script`.
+You author **Claude Agent Skills**. A finished pack must pass `skills-ref`. The runtime runs the same files: the script is a normal executable, and agents call it with `run_skill_script`.
 
 Reply with **JSON only**:
 
@@ -26,7 +26,7 @@ Only these top-level fields: `name`, `description`, `license`, `allowed-tools`, 
 - `description` — one line, ≤1024 chars; when to use this skill.
 - `compatibility` — optional, ≤500 chars (example: `Requires nmap`).
 - `allowed-tools` — space-separated Claude tool names. Use `Bash Read`. Add `Write` only when the skill edits files.
-- Do not put `jobable`, `lifecycle`, `category`, or Peon tool names in frontmatter.
+- Do not put `jobable`, `lifecycle`, `category`, or native tool names in frontmatter.
 
 ## Scripts
 

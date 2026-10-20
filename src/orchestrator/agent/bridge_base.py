@@ -1,6 +1,6 @@
-"""Control-plane bridge ABC for one Job agent (orchestrator never imports peon).
+"""Control-plane bridge ABC for one Job agent (orchestrator never imports a host).
 
-Peon implements this; the agent calls into it for streaming, spawn, findings, etc.
+A host implements this; the agent calls into it for streaming, spawn, findings, etc.
 Not the Docker/OpenShell runtime — that is ``agent_runtime``.
 """
 
@@ -13,7 +13,7 @@ AgentLink = Literal["peer", "child"]
 
 
 class AgentBridgeBase(ABC):
-    """Control-plane adapter injected per Job so the library stays peon-agnostic."""
+    """Control-plane adapter injected per Job so the library stays host-agnostic."""
 
     @abstractmethod
     def emit(
@@ -174,19 +174,19 @@ class AgentBridgeBase(ABC):
     def drain_operator_guidance(self) -> list[str]:
         return []
 
-    # --- RoE (CrewAI roles; peon implements against RulesOfEngagement) ---
+    # --- scope rules (CrewAI roles; a host implements against RulesOfEngagement) ---
 
     def roe_summary(self) -> str:
-        return "RoE bridge not configured."
+        return "scope rules bridge not configured."
 
     def roe_probe_block_reason(self) -> str:
-        """Empty when RoE in_scope is usable for probes; else denial reason."""
-        return "RoE bridge not configured."
+        """Empty when scope in_scope is usable for probes; else denial reason."""
+        return "scope rules bridge not configured."
 
     def assert_in_scope(self, target: str) -> str:
         """Return empty string if allowed, else a denial reason."""
         del target
-        return "RoE bridge not configured."
+        return "scope rules bridge not configured."
 
     def assert_command_allowed(self, command: str) -> str:
         """Return empty string if sandbox command may run, else denial reason."""

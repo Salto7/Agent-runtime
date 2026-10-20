@@ -1,7 +1,7 @@
-"""Operator actions on a live project — the library port of Peon's ``crew_control`` + ``lifecycle`` routing.
+"""Operator actions on a live project.
 
 ``instruct`` steers live agents, ``replan`` revises the plan (by default by resuming the *manager* agent with a
-replan directive, like Peon's CrewAI mode; ``REPLAN_MODE=plan`` re-drafts the objectives with the planner instead),
+replan directive, like the platform's CrewAI mode; ``REPLAN_MODE=plan`` re-drafts the objectives with the planner instead),
 ``stop`` / ``restart`` / ``resume`` manage the whole project.
 """
 
@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-REPLAN_NOTE = "OPERATOR REPLAN — revise the engagement plan and continue under Rules of Engagement:\n"
-INSTRUCT_NOTE = "OPERATOR INSTRUCTION — revise your approach and continue under Rules of Engagement:\n"
+REPLAN_NOTE = "OPERATOR REPLAN — revise the engagement plan and continue under scope rules:\n"
+INSTRUCT_NOTE = "OPERATOR INSTRUCTION — revise your approach and continue under scope rules:\n"
 
 
 class OperatorControl:

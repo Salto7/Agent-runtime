@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Platform dataset only: lessons, gists and playbooks. Project datasets are
 # engagement transcripts and are not a source of generic improvements.
-_SUMMARY_DATASET = "peon"
+_SUMMARY_DATASET = "platform"
 _SUMMARY_QUERIES = (
     "suggested platform improvements tooling gaps missing tools fixes",
     "lessons learned failures pitfalls what should change",
@@ -70,11 +70,11 @@ class DreamingService(SharedServiceBase):
         return self.run_source
 
     def enabled(self) -> bool:
-        return settings.get_bool("PEON_DREAMING_ENABLED", True) and MemoryService.enabled()
+        return settings.get_bool("DREAMING_ENABLED", True) and MemoryService.enabled()
 
     def cursor_path(self) -> Path:
         root = Path(get_config().platform_workspace_dir).resolve()
-        path = root / "peon" / "dream_cursor.json"
+        path = root / "dreaming" / "dream_cursor.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -147,10 +147,10 @@ class DreamingService(SharedServiceBase):
             self.sync_platform_index()
         # Consolidate the platform dataset only when it actually gained
         # something; an unconditional pass re-distils whatever Q&A is cached.
-        peon_result: dict[str, Any] = {"ok": True, "skipped": True, "reason": "no new gists"}
+        platform_result: dict[str, Any] = {"ok": True, "skipped": True, "reason": "no new gists"}
         if any(g.get("gist") for g in gists) or (synthesis or {}).get("saved"):
-            peon_result = MemoryService.improve_sessions(
-                dataset="peon",
+            platform_result = MemoryService.improve_sessions(
+                dataset="platform",
                 session_ids=None,
                 run_in_background=True,
             )
@@ -162,7 +162,7 @@ class DreamingService(SharedServiceBase):
             "gists": gists,
             "synthesis": synthesis,
             "proposals": proposals,
-            "peon_ok": bool(peon_result.get("ok")),
+            "platform_ok": bool(platform_result.get("ok")),
             "errors": errors[:20],
         }
         self.save_cursor(cursor)
@@ -174,14 +174,14 @@ class DreamingService(SharedServiceBase):
             "gists": gists,
             "synthesis": synthesis,
             "proposals": proposals,
-            "peon": peon_result,
+            "platform": platform_result,
             "errors": errors,
         }
 
     def clear(self, *, reindex: bool = True) -> dict[str, Any]:
         """Wipe Cognee, reset what the dream cycle tracked about it, optionally re-index.
 
-        Peon's own records (memory notes, gists, playbooks) are untouched; they
+        the library's own records (memory notes, gists, playbooks) are untouched; they
         are the source of truth. With ``reindex`` the platform dataset is rebuilt
         from them straight away, otherwise the next dream cycle that writes a
         gist or playbook rebuilds it.

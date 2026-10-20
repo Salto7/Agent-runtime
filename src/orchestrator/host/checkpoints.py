@@ -1,6 +1,6 @@
 """Job checkpoints — what a resumed agent needs to continue instead of starting cold.
 
-Written when a job finishes, goes idle or is paused (Peon: ``checkpoints.py``). A checkpoint holds the job's
+Written when a job finishes, goes idle or is paused. A checkpoint holds the job's
 status/result/error and a digest of the project's transcript; ``resume_context_text`` turns the latest one into
 the "Resume from checkpoint" block that is prepended to a resumed job's steer text.
 """

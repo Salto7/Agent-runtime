@@ -18,7 +18,7 @@ shell: bash
 disallowed-tools: Write
 compatibility: Python 3.10+
 metadata:
-  author: peon-fixture
+  author: fixture
 ---
 
 Claude extensions body.

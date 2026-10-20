@@ -9,14 +9,14 @@ from typing import Callable, ClassVar
 from orchestrator.config import get_config
 from orchestrator.skills.providers.base import (
     CLAUDE_PROVIDER,
-    PEON_PROVIDER,
+    NATIVE_PROVIDER,
     SkillDocument,
     SkillId,
     SkillProvider,
 )
 from orchestrator.skills.providers.claude_agent import ClaudeAgentSkillsProvider
 from orchestrator.skills.mounts import extra_skill_mount
-from orchestrator.skills.providers.peon_native import PeonNativeProvider
+from orchestrator.skills.providers.native import NativeProvider
 from orchestrator.skills.registry_scan import discover_skill_manifests
 from orchestrator.utils.paths import safe_join
 from orchestrator.utils.service import SharedServiceBase
@@ -57,7 +57,7 @@ def _document_from_record(rec) -> SkillDocument:
     leads = tuple(b.role_id for b in (rec.bindings or ()) if b.lead and b.role_id in role_ids)
     parsed = SkillId.parse(rec.skill_id)
     if parsed is None:
-        parsed = SkillId(provider=rec.provider or PEON_PROVIDER, name=rec.skill_id)
+        parsed = SkillId(provider=rec.provider or NATIVE_PROVIDER, name=rec.skill_id)
     name = parsed.name
     return SkillDocument(
         skill_id=parsed,
@@ -74,8 +74,8 @@ def _document_from_record(rec) -> SkillDocument:
         compatibility=str(manifest.get("compatibility") or ""),
         setup=setup,
         unmapped_tools=unmapped,
-        container_root=f"/workspace/.peon/skills/{name}",
-        container_setup_root=f"/workspace/.peon/skills/{name}",
+        container_root=f"/workspace/.orchestrator/skills/{name}",
+        container_setup_root=f"/workspace/.orchestrator/skills/{name}",
         license=str(manifest.get("license") or ""),
         when_to_use=str(manifest.get("when_to_use") or ""),
         argument_hint=str(manifest.get("argument_hint") or ""),
@@ -134,7 +134,7 @@ class SkillRegistry(SharedServiceBase):
         config = get_config()
         native_root = self.skills_dir().resolve()
         # One scan of ``skills/``; provider is inferred per pack.
-        found: list[SkillProvider] = [PeonNativeProvider(native_root)]
+        found: list[SkillProvider] = [NativeProvider(native_root)]
         legacy_imported = Path(config.skills_imported_dir).resolve()
         if legacy_imported != native_root and legacy_imported.is_dir():
             found.append(
@@ -223,7 +223,7 @@ class SkillRegistry(SharedServiceBase):
         if parsed is None:
             return None
         # Built-in providers are always registered; skip rebuilding providers().
-        if parsed.provider not in {PEON_PROVIDER, CLAUDE_PROVIDER} and not any(
+        if parsed.provider not in {NATIVE_PROVIDER, CLAUDE_PROVIDER} and not any(
             p.name == parsed.provider for p in self.providers()
         ):
             return None
@@ -264,7 +264,7 @@ class SkillRegistry(SharedServiceBase):
         if doc is None:
             return None
         role = (role_id or "").strip().lower()
-        if doc.provider == PEON_PROVIDER and not role:
+        if doc.provider == NATIVE_PROVIDER and not role:
             return doc
         if not role or role not in doc.role_ids:
             return None

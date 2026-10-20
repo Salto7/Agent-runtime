@@ -1,6 +1,6 @@
 ---
 name: tools-suggestor
-description: Suggest a tools/catalog YAML (and optional {id}.sh) for installing a CLI in the Peon sandbox. Use when an operator describes a tool to add or asks how to install it.
+description: Suggest a tools/catalog YAML (and optional {id}.sh) for installing a CLI in the sandbox. Use when an operator describes a tool to add or asks how to install it.
 allowed-tools: Bash Read
 ---
 

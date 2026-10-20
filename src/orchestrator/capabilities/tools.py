@@ -58,7 +58,7 @@ def provision_cli(binary: str, package: str = "") -> str:
 
 @capability(CapabilityGroup.SANDBOX, tags={"shell"})
 def bash(command: str) -> str:
-    """Claude Bash tool. Run a shell command in the job sandbox (RoE applies)."""
+    """Claude Bash tool. Run a shell command in the job sandbox (scope rules applies)."""
     return bash_body(command)
 
 

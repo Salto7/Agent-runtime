@@ -145,7 +145,7 @@ class RelationSpec:
     title: str
     sources: frozenset[str]  # class slugs; empty = any
     targets: frozenset[str]
-    oam: bool = True  # defined by OAM (vs. Peon-specific)
+    oam: bool = True  # defined by OAM (vs. platform-specific)
 
 
 def _spec(label: str, title: str, src: str, dst: str, *, oam: bool = True) -> RelationSpec:
@@ -189,7 +189,7 @@ RELATIONS: dict[str, RelationSpec] = {
         _spec("member_of", "Member of", "person account", "organization"),
         _spec("uses", "Uses", "service url fqdn organization", "product release"),
         _spec("located_at", "Located at", "organization person ip netblock", "location"),
-        # Peon-specific (kept from the first graph version)
+        # platform-specific (kept from the first graph version)
         _spec("ip_address", "Resolves to", "url", "ip", oam=False),
         _spec("domain", "On domain", "url", "fqdn", oam=False),
         _spec("same_file", "Same file", "file", "file", oam=False),

@@ -1,4 +1,4 @@
-"""Durable schedules — the library port of Peon's ``schedules.py``.
+"""Durable schedules.
 
 A durable project keeps working over time: a schedule (cron / interval / once) fires a job for a role, or re-runs
 an objective, whenever it is due. ``fire_due`` is meant to be called from a periodic loop (the scheduler service

@@ -1,4 +1,4 @@
-"""CrewAI tool factories bound to Peon sandbox / RoE / findings."""
+"""CrewAI tool factories bound to sandbox / scope rules / findings."""
 
 from orchestrator.crew.tools.catalog import (
     build_tools,

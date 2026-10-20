@@ -1,6 +1,6 @@
-"""In-process control plane: the stand-alone replacement for Peon's Django layer.
+"""In-process control plane: the stand-alone replacement for a Django control plane.
 
-Peon's web app owns jobs, objectives, findings, operator prompts and A2A in a
+the platform's web app owns jobs, objectives, findings, operator prompts and A2A in a
 database and runs jobs on a Dramatiq queue. This module provides the same
 *contract* (``AgentBridgeBase`` for the agent, ``run_agent`` for execution) with
 plain Python state and a thread pool, so any host can run crews without Django,
@@ -9,9 +9,9 @@ Redis or a queue:
 * :class:`LocalControlPlane` — registers jobs, runs each in its own thread with
   the project sandbox bound, parks/wakes jobs on A2A messages, writes run logs.
 * :class:`LocalAgentBridge` — the per-job ``AgentBridgeBase`` (spawn, wait, A2A,
-  memory, findings, objectives, artifacts, RoE) backed by that state.
+  memory, findings, objectives, artifacts, scope rules) backed by that state.
 
-Everything that a host may want to own (operator prompts, RoE, job storage) is a
+Everything that a host may want to own (operator prompts, scope rules, job storage) is a
 small hook or dataclass here; subclass or replace it, the agent code does not change.
 """
 
@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import re
 from contextlib import contextmanager
+import atexit
 import json
 import logging
 import os
 import threading
 import time
 import uuid
+import weakref
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -190,7 +192,7 @@ class LocalAgentBridge(AgentBridgeBase):
                 brief = (brief + "\n\n## Scope slice\n" + "\n".join(lines)).strip()
             for rid in roles:
                 role = reg.get(rid)
-                if role is not None and role.is_technical:  # a slice must stay inside RoE (PM/analyzer don't probe)
+                if role is not None and role.is_technical:  # a slice must stay inside scope rules (PM/analyzer don't probe)
                     for val in scope_slice.values():
                         if (reason := self.assert_in_scope(str(val))):
                             return f"Error: scope_slice denied for {val!r}: {reason}"
@@ -712,7 +714,7 @@ class LocalAgentBridge(AgentBridgeBase):
             for j in self.store.list_jobs(self.job.project_id)
         )
 
-    # -- A2A addressing / rendering (Peon: a2a.resolve_recipient / team_listing / render_messages) ----
+    # -- A2A addressing / rendering ----
 
     @staticmethod
     def _short(job_id: str) -> str:
@@ -834,7 +836,7 @@ class LocalAgentBridge(AgentBridgeBase):
             blocks.append(f"[{label} from {who}] (message_id={m.id})\n{m.content}")
         return (
             "## Messages from other agents\n"
-            "You were woken (or resumed) with these messages. Act on them under Rules of Engagement; reply with "
+            "You were woken (or resumed) with these messages. Act on them under scope rules; reply with "
             "`send_message` if the sender needs an answer.\n\n" + "\n\n".join(blocks)
         )
 
@@ -966,15 +968,15 @@ class LocalAgentBridge(AgentBridgeBase):
                   metadata=envelope(EVENT_REPORT_NOTE, {"section": heading}))
         return f"Appended report section '{heading}' to findings/report.md"
 
-    # -- RoE ----------------------------------------------------------------------------
-    # ``Roe is None`` = unrestricted (a library project without rules); once a Roe exists these follow Peon exactly.
+    # -- scope rules ----------------------------------------------------------------------------
+    # ``Roe is None`` = unrestricted (a library project without rules); once a Roe exists these follow the platform exactly.
 
     def _roe(self):
         return self.project.roe
 
     def roe_summary(self) -> str:
         roe = self._roe()
-        return roe.summary() if roe else "No Rules of Engagement set: scope is unrestricted."
+        return roe.summary() if roe else "No scope rules set: scope is unrestricted."
 
     def roe_probe_block_reason(self) -> str:
         """Empty when in_scope is usable for networked probes; else the deny reason."""
@@ -1008,11 +1010,11 @@ class LocalAgentBridge(AgentBridgeBase):
         scope_vals, seed_vals = vals(roe.in_scope), vals(roe.seed)
         needle = value.lower()
         if target_authorized_by_scope(needle, exclusions):
-            return f"{value!r} is excluded by RoE"
+            return f"{value!r} is excluded by scope rules"
         host = hostname_of(value)
         if is_passive_reference_host(host):  # a research API an MCP server queries: provenance, not a target
             if host and target_authorized_by_scope(host, exclusions):
-                return f"{value!r} is excluded by RoE"
+                return f"{value!r} is excluded by scope rules"
             if scope_vals or seed_vals:
                 return ""
             return "no engagement subject — cannot use passive reference hosts"
@@ -1020,7 +1022,7 @@ class LocalAgentBridge(AgentBridgeBase):
             return self.roe_probe_block_reason() or "in_scope is empty — promote targets before active probing"
         if target_authorized_by_scope(needle, scope_vals):
             return ""
-        return f"{value!r} is not in authorized RoE scope"
+        return f"{value!r} is not in authorized scope"
 
     def duplicate_scan_reason(self, command: str) -> str:
         """Non-empty when this job already ran the same catalog CLI against the same host."""
@@ -1052,7 +1054,7 @@ class LocalAgentBridge(AgentBridgeBase):
         return ""
 
     def assert_command_allowed(self, command: str) -> str:
-        """Block active probe commands when RoE scope is empty or a target is denied.
+        """Block active probe commands when scope is empty or a target is denied.
 
         Local inspection (``ls``/``cat``/``python3`` on workspace files) is not a probe — host checks apply only
         when a catalog/role CLI is invoked.
@@ -1153,6 +1155,9 @@ class LocalControlPlane:
         self.lock = threading.RLock()
         self._provisioned: set[str] = set()
         self.executor = executor or ThreadExecutor(max_workers)
+        if isinstance(self.executor, ThreadExecutor):   # in-process jobs: let in-flight turns finish before exit
+            ref = weakref.ref(self)
+            atexit.register(lambda: (p := ref()) is not None and p._drain_at_exit())
         self.stream_socket = ""
         self._stream_server: Any = None
         self.scheduler = ObjectiveScheduler(self)
@@ -1267,7 +1272,7 @@ class LocalControlPlane:
             self.reply_to_prompt(project_id, prompt["id"], answer)
 
     def reply_to_prompt(self, project_id: str, prompt_id: str, answer: str) -> bool:
-        """Deliver an operator reply to a prompt (Peon: ``hitl.resolve_operator_prompt``).
+        """Deliver an operator reply to a prompt.
 
         The reply is durable knowledge (feedback memory + transcript + platform lesson), resumes the prompt's
         blocked objective, and steers the asking job — or re-queues it when it already finished.
@@ -1288,7 +1293,7 @@ class LocalControlPlane:
             return True  # failure-exhausted prompts have their own approve/guidance/deny handling
         note = (f"OPERATOR REPLY (human-in-the-loop):\nKind: {prompt.get('kind', 'agent_ask')}\n"
                 f"Question: {prompt.get('question', '')}\nAnswer: {text}\n\n"
-                "Honor this under Rules of Engagement and continue the objective.")
+                "Honor this under scope rules and continue the objective.")
         job = self.store.get_job(prompt.get("job_id", ""))
         if job is not None and job.objective_seq:
             self.scheduler.resume_blocked(project_id, job.objective_seq, reason="Operator replied")
@@ -1321,11 +1326,11 @@ class LocalControlPlane:
         try:
             from orchestrator.crew.memory import MemoryService
 
-            MemoryService.remember_peon(
+            MemoryService.remember_platform(
                 f"Operator guidance on {prompt.get('kind', '')}: Q={str(prompt.get('question', ''))[:240]} A={text[:400]}",
                 category="method", event="operator_guidance", project_id=project_id)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("remember_peon failed: %s", exc)
+            logger.warning("remember_platform failed: %s", exc)
 
     def steer(self, job_id: str, text: str, *, remember: bool = True) -> bool:
         """Operator guidance for a live job (drained before its next turn); wakes it if idle."""
@@ -1455,7 +1460,7 @@ class LocalControlPlane:
                 self.scheduler.reopen_for_job(job)
             self.executor.dispatch(job_id, True, "")
 
-    # -- operator job control (Peon: pause / resume / kill) ----------------------------------
+    # -- operator job control ----------------------------------
 
     def pause(self, job_id: str) -> bool:
         """Pause a job. Pending/idle jobs pause immediately; a running job is asked to stop (cooperative:
@@ -1484,7 +1489,7 @@ class LocalControlPlane:
         return False
 
     def kill(self, job_id: str, *, cascade: bool = True) -> bool:
-        """Operator kill (Peon: ``apply_directive(job, "kill")``): cancel the job (and its live children) and
+        """Operator kill``): cancel the job (and its live children) and
         withdraw its objective — or, for a job with none, the open objectives of its roles."""
         job = self.store.get_job(job_id)
         if job is None or job.status in TERMINAL:
@@ -1505,7 +1510,7 @@ class LocalControlPlane:
         return True
 
     def requeue(self, job_id: str) -> JobState | None:
-        """Reset a job to ``pending`` and run it again (Peon: ``lifecycle.queue_job``): objective reopened,
+        """Reset a job to ``pending`` and run it again: objective reopened,
         error/result cleared. A running or already-pending job is left alone."""
         job = self.store.get_job(job_id)
         if job is None or job.status in {"running", "pending"}:
@@ -1621,7 +1626,7 @@ class LocalControlPlane:
     def execute(self, job_id: str, resume: bool = False, steer: str = "") -> None:
         """Run one job to the end of its turn. Called by the executor (thread or worker).
 
-        Mirrors Peon's ``run_job``: objective checks, dependency/slot gates, RoE fail-closed, the deterministic
+        Mirrors the ``run_job``: objective checks, dependency/slot gates, scope fail-closed, the deterministic
         manager bookend, sandbox only for roles that run commands, CLI provisioning, then the agent.
         """
         if not self.store.claim_job(job_id, {"pending"}, "running"):
@@ -1709,7 +1714,7 @@ class LocalControlPlane:
             bridge.emit("error", f"finding ingest: {exc}")
         self._finish(job_id, bridge, result)
 
-    # -- run preparation (Peon: job_run helpers) -----------------------------------------------
+    # -- run preparation -----------------------------------------------
 
     def _objective_gate(self, job: JobState, resume: bool) -> "AgentRunResult | None":
         """A job for a cancelled/already-completed objective does not run (resumes are exempt)."""
@@ -1727,7 +1732,7 @@ class LocalControlPlane:
         return None
 
     def _roe_blocks(self, job: JobState) -> str:
-        """Fail-closed: an active probe role with an empty in_scope does not start (only when a RoE exists)."""
+        """Fail-closed: an active probe role with an empty in_scope does not start (only when a scope rules exists)."""
         from orchestrator.engagement.roe_ops import roe_block_reason
 
         roe = self.store.get_project(job.project_id).roe
@@ -1806,7 +1811,7 @@ class LocalControlPlane:
             logger.warning("memory index injection failed: %s", exc)
             return ""
 
-    # -- pre-run gates (Peon: dependency deferral, job slots, deterministic manager bookend) ----
+    # -- pre-run gates ----
 
     def _gate(self, job: JobState, resume: bool) -> str:
         """Return ``"run"``, ``"deferred"`` (job was parked/re-queued) or ``"manager_dispatch"``."""
@@ -1838,6 +1843,20 @@ class LocalControlPlane:
         if cur is not None and cur.status == "cancelled" and cur.extras.get("terminal_pending"):
             self._finish(job.id, LocalAgentBridge(self, cur), AgentRunResult(ok=False, output="", error="cancelled"))
         return False
+
+    def _drain_at_exit(self, timeout: float = 20.0) -> None:
+        """Give in-process turns that are still running (e.g. a just-cancelled governor) a moment to wind down.
+
+        Without this the interpreter tears down its helper pools first and the agent library logs a burst of
+        "cannot schedule new futures after shutdown" errors from a turn that was merely finishing."""
+        deadline = time.monotonic() + timeout
+        try:
+            while time.monotonic() < deadline and any(
+                j.status == "running" for pid in self.store.list_projects() for j in self.store.list_jobs(pid)
+            ):
+                time.sleep(0.2)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _release_workspace_ownership(self, bridge: "LocalAgentBridge | None" = None) -> None:
         """Give the bind-mounted workspace back to the host user.
@@ -2011,7 +2030,7 @@ class LocalControlPlane:
         return any(j.parent_id == job.id for j in self.store.list_jobs(job.project_id))
 
     def _after_terminal(self, job: JobState, bridge: "LocalAgentBridge | None" = None) -> None:
-        """Everything that follows a job reaching a terminal state (Peon: ``finish_job``)."""
+        """Everything that follows a job reaching a terminal state."""
         bridge = bridge or LocalAgentBridge(self, job)
         try:
             write_checkpoint(self, job, reason="job_finished")

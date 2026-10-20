@@ -10,7 +10,7 @@ _FACTORIES: dict[str, ToolFactory] = {}
 
 # Engagement roles get these without listing them on every skill pack.
 # In the job model (one role per Dramatiq Job — the default) peer messaging is
-# Peon A2A: send_message / check_inbox / go_idle wake idle agents across jobs.
+# send_message / check_inbox / go_idle wake idle agents across jobs.
 # CrewAI's native "Ask/Delegate to coworker" tools apply only to the in-process
 # crew (crew_mode=project), where several agents share one Crew.
 COLLAB_TOOLS: tuple[str, ...] = (
@@ -190,9 +190,9 @@ def with_collab_tools(
     *,
     tool_names: Iterable[str] | None = None,
 ) -> tuple[str, ...]:
-    """Role/skill tools plus Peon runtime + lane-orchestration tools.
+    """Role/skill tools plus the platform runtime + lane-orchestration tools.
 
-    Skills often list OpenCode-only names; Peon injects the CrewAI sandbox /
+    Skills often list OpenCode-only names; The runtime injects the CrewAI sandbox /
     findings / objective surface so specialists can actually execute.
     """
     raw = tool_names if tool_names is not None else getattr(role, "tools", ()) or ()

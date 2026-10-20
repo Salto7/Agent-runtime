@@ -1,4 +1,4 @@
-"""Rules-of-Engagement operations — the library port of Peon's ``roe_ops.py``.
+"""Scope-rules operations.
 
 Scope *values* authorize; discovered targets are only **candidates** until promoted. All functions take the control
 plane (for its ``StateStore``) and a project id, and update the stored ``Roe`` under a per-project lock.
@@ -34,7 +34,7 @@ def roe_block_reason(role_ids: Iterable[str] | None, scope: Iterable[Any] | None
     if not needing:
         return None
     return (
-        "Rules of Engagement fail-closed: in_scope has no authorized targets for "
+        "scope rules fail-closed: in_scope has no authorized targets for "
         f"{', '.join(needing)} (add targets or deduce from brief)"
     )
 
@@ -55,7 +55,7 @@ def _escalate_scope_change(plane: "LocalControlPlane", project_id: str, added: l
         return
     vals = ", ".join(t.get("value", "") for t in added if t.get("value"))[:300]
     try:
-        plane.governance.notify(project_id, text=f"Scope changed: {len(added)} target(s) now in RoE in_scope: {vals}",
+        plane.governance.notify(project_id, text=f"Scope changed: {len(added)} target(s) now in scope in_scope: {vals}",
                                 escalate=True)
     except Exception as exc:  # noqa: BLE001
         logger.debug("governor notify failed: %s", exc)
@@ -117,7 +117,13 @@ def promote_candidates(plane: "LocalControlPlane", project_id: str, *, indices: 
 
 
 def authorize_operator_scope(plane: "LocalControlPlane", project_id: str, text: str) -> list[dict[str, str]]:
-    """Merge operator-named assets into ``in_scope`` (operator chat / replan text = authorization)."""
+    """Merge operator-named assets into ``in_scope`` (operator chat / replan text = authorization).
+
+    Scope rules are optional: a project without any stays without — naming a host in chat must not switch
+    enforcement on by itself.
+    """
+    if plane.store.get_project(project_id).roe is None:
+        return []
     blob = text or ""
     incoming = extract_targets(blob)
     if not incoming and len(blob.strip()) >= 8:
@@ -146,7 +152,7 @@ def authorize_operator_scope(plane: "LocalControlPlane", project_id: str, text: 
 
 def provision_roe(plane: "LocalControlPlane", project_id: str, *, texts: Iterable[str] | None = None,
                   exclusions: list | None = None, authorization: str = "", title: str = "") -> tuple[Roe, list[str]]:
-    """Ensure the project has a RoE. If ``in_scope`` is empty, deduce assets from the brief into it.
+    """Ensure the project has a scope rules. If ``in_scope`` is empty, deduce assets from the brief into it.
 
     Stored rows are re-validated against the asset-name shape contract; type labels are soft hints.
     """
@@ -181,7 +187,7 @@ def provision_roe(plane: "LocalControlPlane", project_id: str, *, texts: Iterabl
                 if authorization and not roe.authorization_note:
                     roe.authorization_note = authorization
                 elif not roe.authorization_note:
-                    roe.authorization_note = "Auto-deduced from brief (operator did not supply Rules of Engagement)."
+                    roe.authorization_note = "Auto-deduced from brief (operator did not supply scope rules)."
                 if not coerce_targets(roe.seed):
                     bits = [s.strip() for s in (title, *(texts or [])) if (s or "").strip()]
                     if bits:
@@ -198,7 +204,7 @@ def provision_roe(plane: "LocalControlPlane", project_id: str, *, texts: Iterabl
 
 
 def roe_add_path(plane: "LocalControlPlane", project_id: str, sandbox_path: str) -> None:
-    """Authorize a project-local input path in RoE seed + in_scope."""
+    """Authorize a project-local input path in the scope rules seed + in_scope."""
     path = (sandbox_path or "").strip()
     if not path:
         return
@@ -216,7 +222,7 @@ def roe_add_path(plane: "LocalControlPlane", project_id: str, sandbox_path: str)
 
 
 def roe_remove_path(plane: "LocalControlPlane", project_id: str, sandbox_path: str) -> None:
-    """Drop a path value from RoE seed + in_scope (if present)."""
+    """Drop a path value from scope rules seed + in_scope (if present)."""
     if plane.store.get_project(project_id).roe is None:
         return
     path = (sandbox_path or "").strip()

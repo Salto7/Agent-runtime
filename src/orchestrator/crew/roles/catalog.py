@@ -38,7 +38,7 @@ DEFAULT_ROLES: tuple[RoleDef, ...] = (
         "engagement-pm",
         protected=True,
         goal=(
-            "Review RoE and the objective sequence, dispatch specialists, "
+            "Review scope rules and the objective sequence, dispatch specialists, "
             "recover from failures, replan when evidence changes, and hand "
             "off to the analyzer. Do not probe targets or record findings."
         ),
@@ -65,13 +65,13 @@ DEFAULT_ROLES: tuple[RoleDef, ...] = (
         "researcher",
         "technical",
         goal="Gather, verify and summarize information from the sources and tools available.",
-        backstory="You lead research work: find evidence, cross-check it, and stay inside the rules of engagement.",
+        backstory="You lead research work: find evidence, cross-check it, and stay inside the scope rules.",
     ),
     RoleDef(
         "builder",
         "technical",
         goal="Write, run and verify scripts or small programs that produce the requested artifact.",
-        backstory="You lead hands-on build work: implement, run, verify, and stay inside the rules of engagement.",
+        backstory="You lead hands-on build work: implement, run, verify, and stay inside the scope rules.",
     ),
 )
 
@@ -138,7 +138,7 @@ def seed_role_text(role_id: str, kind: str) -> tuple[str, str]:
             return role.goal, role.backstory
     return (
         f"Lead authorized work for `{rid or 'this role'}` using the skills bound to it.",
-        "You are a technical expert. Stay inside the rules of engagement.",
+        "You are a technical expert. Stay inside the scope rules.",
     )
 
 

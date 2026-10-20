@@ -13,7 +13,7 @@ from orchestrator.skills.install.lockfile import record
 from orchestrator.skills.install.validate import validate_pack
 from orchestrator.skills.manifest import ParseProfile, SkillParseError, find_skill_manifest
 from orchestrator.skills.model import parse_skill_md
-from orchestrator.skills.providers.base import CLAUDE_PROVIDER, PEON_PROVIDER, SkillId
+from orchestrator.skills.providers.base import CLAUDE_PROVIDER, NATIVE_PROVIDER, SkillId
 from orchestrator.skills.registry import SkillRegistry
 from orchestrator.utils.install_skip import copytree_ignore
 
@@ -27,7 +27,7 @@ def _frontmatter_name(skill_dir: Path) -> str:
     except SkillParseError as exc:
         raise ValueError(exc.message) from exc
     parsed = SkillId.parse(spec.id)
-    if parsed is None or parsed.provider != PEON_PROVIDER:
+    if parsed is None or parsed.provider != NATIVE_PROVIDER:
         raise ValueError(f"{skill_dir.name} frontmatter name is not a bare skill id")
     return parsed.name
 
@@ -73,7 +73,7 @@ def _stamp_claude_provider(manifest: Path) -> None:
 
 
 def place_pack(skill_dir: Path, *, source: str, revision: str = "") -> str:
-    """Validate, reject Peon-name collisions, then copy into ``skills/``."""
+    """Validate, reject name collisions, then copy into ``skills/``."""
     import tempfile
 
     root = Path(skill_dir)
@@ -97,7 +97,7 @@ def place_pack(skill_dir: Path, *, source: str, revision: str = "") -> str:
     staged_tmp = None
     work = root
     if root.name.lower() != name:
-        staged_tmp = tempfile.TemporaryDirectory(prefix="peon-skill-stage-")
+        staged_tmp = tempfile.TemporaryDirectory(prefix="orchestrator-skill-stage-")
         staged = Path(staged_tmp.name) / name
         shutil.copytree(root, staged, ignore=copytree_ignore())
         work = staged
@@ -109,9 +109,9 @@ def place_pack(skill_dir: Path, *, source: str, revision: str = "") -> str:
         errors = validate_pack(work)
         if errors:
             raise ValueError("; ".join(errors))
-        peon = SkillRegistry.shared().get(name)
-        if peon is not None and peon.provider == PEON_PROVIDER:
-            raise ValueError(f"skill name {name} is already a Peon skill")
+        native = SkillRegistry.shared().get(name)
+        if native is not None and native.provider == NATIVE_PROVIDER:
+            raise ValueError(f"skill name {name} is already a native skill")
         dest_root = Path(get_config().skills_dir)
         dest_root.mkdir(parents=True, exist_ok=True)
         dest = dest_root / name

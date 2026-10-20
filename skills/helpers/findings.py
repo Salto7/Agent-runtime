@@ -1,6 +1,6 @@
-"""Append finding records for the peon worker to ingest (no Django).
+"""Append finding records for the orchestrator worker to ingest (no Django).
 
-Engagement discoveries about any subject class (with evidence). Peon
+Engagement discoveries about any subject class (with evidence). the platform
 re-normalizes on ingest — this queue only requires a title. Do not queue
 job/objective/agent status here.
 """

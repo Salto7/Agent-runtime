@@ -6,7 +6,7 @@ allowed-tools: Bash Read
 
 ## Goal
 Run a **saved tick script** on a fixed interval inside the sandbox. Prefer one check
-per tick (no `while True` / long `time.sleep` inside the script). Obey RoE when under
+per tick (no `while True` / long `time.sleep` inside the script). Obey scope rules when under
 a project.
 
 ## Setup

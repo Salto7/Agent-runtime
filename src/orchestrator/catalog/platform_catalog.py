@@ -6,7 +6,7 @@ SQLite file (``<platform_workspace_dir>/catalog.sqlite3``, see
 those tables directly.
 
 ``skills/`` is a one-time bootstrap when the skill table is empty. Pack type
-(peon vs claude) is inferred per directory. After that the database is the
+(native vs claude) is inferred per directory. After that the database is the
 registry.
 
 A host with its own storage subclasses :class:`PlatformCatalog` and installs it
@@ -547,7 +547,7 @@ class PlatformCatalog:
         return tuple(
             SkillRecord(
                 skill_id=str(row.skill_id),
-                provider=str(row.provider or "peon"),
+                provider=str(row.provider or "native"),
                 description=str(row.description or ""),
                 body=str(row.body or ""),
                 manifest=dict(row.manifest or {}),
@@ -582,7 +582,7 @@ class PlatformCatalog:
         bindings = self.list_bindings(owner_kind=OWNER_SKILL, owner_id=row.skill_id)
         return SkillRecord(
             skill_id=str(row.skill_id),
-            provider=str(row.provider or "peon"),
+            provider=str(row.provider or "native"),
             description=str(row.description or ""),
             body=str(row.body or ""),
             manifest=dict(row.manifest or {}),
@@ -597,7 +597,7 @@ class PlatformCatalog:
         skill_md: str,
         files: dict[str, str] | None = None,
         skill_id: str = "",
-        provider: str = "peon",
+        provider: str = "native",
         bindings: list[dict[str, Any]] | None = None,
         keep_bindings: bool = False,
         from_disk: bool = False,
@@ -611,7 +611,7 @@ class PlatformCatalog:
         ``only_if_pristine`` makes a disk refresh leave such rows alone.
         """
         from orchestrator.skills.manifest import ParseProfile, SkillParseError, parse_skill_manifest
-        from orchestrator.skills.providers.base import PEON_PROVIDER, SkillId
+        from orchestrator.skills.providers.base import NATIVE_PROVIDER, SkillId
 
         from orchestrator.catalog.models import CatalogFile, CatalogSkill
 
@@ -636,9 +636,9 @@ class PlatformCatalog:
         )
         profile = (
             ParseProfile.CLAUDE_CODE
-            if (parsed_id is not None and parsed_id.provider != PEON_PROVIDER)
-            or provider != PEON_PROVIDER
-            else ParseProfile.PEON
+            if (parsed_id is not None and parsed_id.provider != NATIVE_PROVIDER)
+            or provider != NATIVE_PROVIDER
+            else ParseProfile.NATIVE
         )
         try:
             manifest = parse_skill_manifest(
@@ -649,8 +649,8 @@ class PlatformCatalog:
         except SkillParseError as exc:
             raise ValueError(exc.message) from exc
         public = manifest.command_name
-        prov = PEON_PROVIDER if profile == ParseProfile.PEON else "claude"
-        if prov != PEON_PROVIDER:
+        prov = NATIVE_PROVIDER if profile == ParseProfile.NATIVE else "claude"
+        if prov != NATIVE_PROVIDER:
             public = f"{prov}/{manifest.command_name}"
         rename_from = ""
         if hinted and SkillId.parse(hinted) is not None:
@@ -1164,11 +1164,11 @@ class PlatformCatalog:
         keep_bindings: bool,
         only_if_pristine: bool = False,
     ) -> list[str]:
-        from orchestrator.skills.providers.base import CLAUDE_PROVIDER, PEON_PROVIDER
+        from orchestrator.skills.providers.base import CLAUDE_PROVIDER, NATIVE_PROVIDER
         from orchestrator.skills.registry_scan import discover_skill_candidates
 
         imported: list[str] = []
-        default = PEON_PROVIDER if mode == "infer" else CLAUDE_PROVIDER
+        default = NATIVE_PROVIDER if mode == "infer" else CLAUDE_PROVIDER
         source = "native" if mode == "infer" else "imported"
         try:
             candidates = discover_skill_candidates(
@@ -1230,7 +1230,7 @@ class PlatformCatalog:
             if not path.is_file():
                 continue
             rel = path.relative_to(candidate.root).as_posix()
-            if rel in {"SKILL.md", "peon.affinity.yaml"} or path.name.startswith("."):
+            if rel in {"SKILL.md", "affinity.yaml"} or path.name.startswith("."):
                 continue
             try:
                 files[rel] = path.read_text(encoding="utf-8")

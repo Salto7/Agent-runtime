@@ -92,7 +92,7 @@ def upsert_role_skills(
     try:
         from orchestrator.crew.memory import MemoryService
 
-        MemoryService.remember_peon(
+        MemoryService.remember_platform(
             text,
             category="method",
             event="role_skills",
